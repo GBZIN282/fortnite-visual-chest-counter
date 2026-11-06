@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build-venv/
+*.egg-info/
+.pytest_cache/
+
+# Local / runtime data (every user has their own)
+state/
+logs/
+obs_output/
+video_output/
+config.toml
+*.damaged-*.json
+
+# Research / test media and generated analysis (large; never commit)
+samples/
+analysis_output/
+*.mp4
+*.mkv
+*.mov
+*.wav
+*.npz
+
+# Builds
+build/
+dist/
+build_out/
+*.spec
+*.zip
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log

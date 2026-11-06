@@ -1,0 +1,1132 @@
+"""
+Chest counter: persistent state, OBS text files, session log, manual controls, a live-style
+simulation on a recorded video, and the LIVE mode for OBS / capture card / desktop.
+
+    frame source  ->  estimator.ChestEstimator  ->  counter state  ->  OBS text files + log
+
+Packaged app: "Fortnite Visual Chest Counter.exe" with no arguments = `live` (see the .bat launchers).
+Developers: the same commands via `python -m fortnite_chest_counter ...`.
+
+Commands
+--------
+    python -m fortnite_chest_counter live --source obs-camera          # recommended: OBS Virtual Camera feed
+    python -m fortnite_chest_counter live --source device --device "Elgato HD60 X"
+    python -m fortnite_chest_counter live --source desktop --monitor 1 # fallback
+    python -m fortnite_chest_counter video "my gameplay.mp4"           # count chests in a recording (never touches the live counter)
+    python -m fortnite_chest_counter devices                           # list video devices and monitors
+    python -m fortnite_chest_counter simulate --name Fortnite-PS5-Pro --reset   # recorded video, chronological
+    python -m fortnite_chest_counter show | reset | adjust --certain -1 --approx -1
+    python -m fortnite_chest_counter diagnostics                       # support report (also saved to logs/diagnostics.txt)
+    python -m fortnite_chest_counter --version
+    python -m fortnite_chest_counter evaluate --name Fortnite-PS5-Pro --log logs/session_xxx.jsonl
+
+Settings come from config.toml if present (see config.example.toml), else built-in defaults;
+command-line options override both. Counts persist in the state file and are never reset
+unless you run `reset` / pass --reset. The OBS files are plain UTF-8 text in obs_output/,
+written atomically.
+"""
+
+import argparse
+import json
+import os
+import struct
+import subprocess
+import sys
+import time
+import zlib
+from collections import deque
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+
+from fortnite_chest_counter.detection import fusion
+from fortnite_chest_counter import paths
+from fortnite_chest_counter import settings
+from fortnite_chest_counter.detection import visual as V
+from fortnite_chest_counter.version import APP_NAME, RELEASE_CHANNEL, __version__
+
+SAMPLES = Path("samples/video tests")
+LAST_CHEST_NONE = "NO CHESTS YET"
+SEPARATOR = " • "
+
+
+class UserError(Exception):
+    """An expected setup/usage problem: shown to the user as a plain message, never a traceback."""
+
+
+def now_iso():
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def atomic_write(path, text):
+    """Write UTF-8 text so a reader (OBS) never sees a half-written file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    for _ in range(20):                      # Windows: replace can fail while OBS has the file open
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(0.05)
+    os.replace(tmp, path)
+
+
+def mmss(seconds):
+    minutes, rest = divmod(seconds, 60)
+    return f"{int(minutes):02d}:{rest:05.2f}"
+
+
+# ==================================================================
+# STATE (always plain integers; formatting happens only for display)
+# ==================================================================
+
+def fresh_state():
+    return {"certain": 0, "approximate": 0, "events_logged": 0, "last_event_id": None, "last_event": None,
+            "session_started_at": now_iso(), "updated_at": now_iso(), "last_processed_time": 0.0}
+
+
+def _valid_count(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def load_state(path, warn=print):
+    """Read the counter file. A missing file is a fresh start. A damaged one is set aside (never
+    deleted) and replaced by a fresh state, with a message, so a bad file can never stop the app.
+    Guarantees the public invariant approximate >= certain."""
+    path = Path(path)
+    if not path.exists():
+        return fresh_state()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or not _valid_count(raw.get("certain")) or not _valid_count(raw.get("approximate")):
+            raise ValueError("'certain' and 'approximate' must be whole numbers >= 0")
+    except (OSError, ValueError) as error:          # JSONDecodeError and UnicodeDecodeError are ValueErrors
+        backup = path.with_name(f"{path.stem}.damaged-{datetime.now():%Y%m%d_%H%M%S}{path.suffix}")
+        try:
+            os.replace(path, backup)
+            where = f"The damaged file was kept as {backup.name}."
+        except OSError:
+            where = "The damaged file could not be moved aside."
+        warn(f"WARNING: the saved counter ({path}) is damaged ({error}). Starting from 0. {where}")
+        return fresh_state()
+    state = {**fresh_state(), **raw}
+    if state["approximate"] < state["certain"]:
+        warn(f"WARNING: saved APPROX ({state['approximate']}) was below CERTAIN ({state['certain']}); "
+             f"APPROX is the total and includes the certain chests, so it was raised to {state['certain']}.")
+        state["approximate"] = state["certain"]
+    return state
+
+
+def save_state(path, state):
+    state["updated_at"] = now_iso()
+    atomic_write(path, json.dumps(state, indent=2, ensure_ascii=False) + "\n")
+
+
+def last_chest_text(state):
+    last = state.get("last_event")
+    if not last:
+        return LAST_CHEST_NONE
+    if last.get("certain_counted"):
+        return f"CHEST +1{SEPARATOR}{last['adjusted_tier']}"
+    if last.get("approx_counted"):
+        return f"CHEST ~+1{SEPARATOR}APPROX"
+    return LAST_CHEST_NONE
+
+
+def write_obs_files(state, obs_dir, display):
+    """The four OBS text files. Every number goes through settings.format_count."""
+    thousands = display["use_thousands_separator"]
+    certain = settings.format_count(state["certain"], thousands)
+    approx = settings.format_count(state["approximate"], thousands)
+    obs_dir = Path(obs_dir)
+    atomic_write(obs_dir / "certain_chests.txt", f"{display['certain_label']}: {certain}\n")
+    atomic_write(obs_dir / "approximate_chests.txt", f"{display['approximate_label']}: {approx}\n")
+    atomic_write(obs_dir / "chest_status.txt",
+                 display["combined_status_format"].format(certain=certain, approximate=approx) + "\n")
+    atomic_write(obs_dir / "last_chest.txt", last_chest_text(state) + "\n")
+
+
+def write_png(path, rgb):
+    """Minimal RGB PNG writer (no image library needed)."""
+    h, w, _ = rgb.shape
+    raw = b"".join(b"\x00" + rgb[y].tobytes() for y in range(h))
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                           + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+
+
+class SessionLog:
+    def __init__(self, log_cfg):
+        self.enabled, self.log_candidates = log_cfg["enabled"], log_cfg["log_candidates"]
+        self.path = None
+        if self.enabled:
+            Path(log_cfg["dir"]).mkdir(parents=True, exist_ok=True)
+            self.path = Path(log_cfg["dir"]) / f"session_{datetime.now():%Y%m%d_%H%M%S}.jsonl"
+        self.snapshot_dir = (Path(log_cfg["dir"]) / "snapshots" / self.path.stem) if self.enabled and log_cfg.get("save_snapshots") else None
+
+    def save_snapshot(self, name, rgb):
+        """Popup-region image for one event, so a human can later check what was (not) counted. -> file name or None."""
+        if self.snapshot_dir is None or rgb is None:
+            return None
+        try:
+            self.snapshot_dir.mkdir(parents=True, exist_ok=True)
+            write_png(self.snapshot_dir / name, np.ascontiguousarray(rgb, dtype=np.uint8))
+            return name
+        except OSError:
+            return None
+
+    def write(self, record, counted=True):
+        if not self.enabled or (not counted and not self.log_candidates):
+            return
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, default=lambda o: o.item() if hasattr(o, "item") else str(o)) + "\n")
+
+
+class CounterSession:
+    """Counts + OBS files + log for one run; shared by `simulate` and `live`."""
+
+    def __init__(self, cfg, reset=False):
+        self.cfg = cfg
+        self.persist = cfg["state"]["persist"]
+        self.state_path, self.obs_dir = Path(cfg["state"]["path"]), Path(cfg["state"]["obs_dir"])
+        self.display = cfg["display"]
+        self.state = fresh_state() if reset or not self.persist else load_state(self.state_path)
+        self.loaded_existing = (not reset) and self.persist and self.state_path.exists()
+        self.log = SessionLog(cfg["logging"])
+        self.latencies = []
+        self._warned = set()
+        self._mtime = self._state_mtime()
+
+    def _state_mtime(self):
+        try:
+            return self.state_path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def _warn_once(self, key, message):
+        if key not in self._warned:
+            self._warned.add(key)
+            print(f"WARNING: {message}")
+
+    def fmt(self, n):
+        return settings.format_count(n, self.display["use_thousands_separator"])
+
+    def save(self):
+        if self.persist:
+            try:
+                save_state(self.state_path, self.state)
+            except OSError as error:                 # never let a locked/full disk kill a live session
+                self._warn_once("state", f"could not save {self.state_path} ({error}); will retry on the next chest")
+            self._mtime = self._state_mtime()
+
+    def write_obs(self):
+        try:
+            write_obs_files(self.state, self.obs_dir, self.display)
+        except OSError as error:
+            self._warn_once("obs", f"could not update the OBS text files in {self.obs_dir} ({error}); will retry on the next chest")
+
+    def sync_external_changes(self):
+        """`Reset Counter` / `adjust` run as separate programs and edit the state file. If that happened
+        while we are running, adopt their numbers instead of overwriting them on the next save."""
+        if not self.persist or self._state_mtime() == self._mtime:
+            return False
+        before = (self.state["certain"], self.state["approximate"])
+        new = load_state(self.state_path, warn=lambda m: self._warn_once("sync", m))
+        self.state.clear()
+        self.state.update(new)
+        self._mtime = self._state_mtime()
+        self.write_obs()
+        self.log.write({"event": "external_change", "previous": {"certain": before[0], "approximate": before[1]},
+                        "counts_after": {"certain": self.state["certain"], "approximate": self.state["approximate"]},
+                        "logged_at": now_iso()})
+        return (self.state["certain"], self.state["approximate"]) != before
+
+    def apply(self, finished, now_t, quiet=False):
+        """Count and log finished estimator events; refresh files when a count changed."""
+        applied = []
+        for ev in finished:
+            st = self.state
+            st["events_logged"] += 1
+            event_id = f"E{st['events_logged']:04d}"
+            # PUBLIC INVARIANT: APPROX is the best estimate of the TOTAL and contains the CERTAIN chests.
+            # A certain chest therefore always adds exactly 1 to BOTH counts, an approx-only chest adds 1 to APPROX.
+            certain_inc = int(bool(ev["certain_counted"]))
+            approx_inc = int(bool(ev["approx_counted"]) or bool(certain_inc))
+            ev["approx_counted"] = bool(approx_inc)
+            st["certain"] += certain_inc
+            st["approximate"] += approx_inc
+            if st["approximate"] < st["certain"]:                       # cannot happen; repair rather than ever show it
+                st["approximate"] = st["certain"]
+            ev["event_id"], ev["stamp"] = event_id, mmss(ev["time"])
+            snapshot = ev.pop("_snapshot", None)
+            verdict = "CERTAIN" if certain_inc else "APPROX" if approx_inc else "notcounted"
+            ev["snapshot"] = self.log.save_snapshot(
+                f"{event_id}_{ev['stamp'].replace(':', 'm').replace('.', 's')}_{ev['adjusted_tier']}_{verdict}.png", snapshot)
+            write_s = 0.0
+            if certain_inc or approx_inc:
+                st["last_event_id"] = event_id
+                st["last_event"] = {k: ev[k] for k in ("event_id", "stamp", "source", "adjusted_tier",
+                                                       "certain_counted", "approx_counted")}
+                t0 = time.perf_counter()
+                self.write_obs()
+                write_s = time.perf_counter() - t0
+            ev["latency_s"] = round(now_t - ev["time"] + write_s, 3)       # event start -> OBS text updated
+            if certain_inc or approx_inc:
+                self.latencies.append(ev["latency_s"])
+            st["last_processed_time"] = now_t
+            self.save()
+            self.log.write({**ev, "certain_increment": certain_inc, "approx_increment": approx_inc,
+                            "counts_after": {"certain": st["certain"], "approximate": st["approximate"]},
+                            "obs_write_s": round(write_s, 4), "logged_at": now_iso()},
+                           counted=bool(certain_inc or approx_inc))
+            flag = "CERTAIN+1" if certain_inc else "APPROX+1 " if approx_inc else "not counted"
+            if not quiet:
+                print(f"  [{mmss(now_t)}] {event_id} event@{ev['stamp']} {ev['source']:18s} tier {ev['adjusted_tier']:>6s} "
+                      f"-> {flag:11s} | certain {self.fmt(st['certain'])}  approx {self.fmt(st['approximate'])} "
+                      f"| +{ev['latency_s']:.1f}s | {ev['reason'][:100]}")
+            applied.append(ev)
+        return applied
+
+
+# ==================================================================
+# CONFIG PLUMBING
+# ==================================================================
+
+def make_config(args):
+    overrides = {("detector", "process_fps"): getattr(args, "process_fps", None),
+                 ("state", "path"): getattr(args, "state", None), ("state", "obs_dir"): getattr(args, "obs_dir", None),
+                 ("logging", "dir"): getattr(args, "log_dir", None), ("live", "source"): getattr(args, "source", None),
+                 ("live", "device"): getattr(args, "device", None), ("live", "monitor"): getattr(args, "monitor", None)}
+    cfg, origin, warnings = settings.load_config(getattr(args, "config", None), overrides)
+    for w in warnings:
+        print(f"WARNING: {w}")
+    from fortnite_chest_counter import estimator
+    estimator.configure(cfg["detector"])
+    estimator.SAVE_SNAPSHOTS = cfg["logging"]["enabled"] and cfg["logging"]["save_snapshots"]
+    return cfg, origin
+
+
+# ==================================================================
+# FRAME SOURCE FOR RECORDED VIDEO
+# ==================================================================
+
+class Mp4FrameSource:
+    """Yields (seconds, 720p RGB frame) in order at `fps`. A live source provides the same thing."""
+
+    def __init__(self, path, fps, start=0.0, until=None):
+        self.path, self.fps, self.start, self.until = Path(path), fps, start, until
+
+    def frames(self):
+        cmd = ["ffmpeg", "-v", "error"]
+        if self.start:
+            cmd += ["-ss", f"{self.start:.3f}"]
+        cmd += ["-i", str(self.path)]
+        if self.until is not None:
+            cmd += ["-t", f"{self.until - self.start:.3f}"]
+        cmd += ["-vf", f"{V.scale_filter()},fps={self.fps}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=10 ** 8)
+        size = V.NORMALIZED_WIDTH * V.NORMALIZED_HEIGHT * 3
+        i = 0
+        while True:
+            raw = process.stdout.read(size)
+            if len(raw) < size:
+                break
+            yield self.start + i / self.fps, np.frombuffer(raw, np.uint8).reshape(V.NORMALIZED_HEIGHT, V.NORMALIZED_WIDTH, 3)
+            i += 1
+
+
+def hd_video_for(name):
+    return SAMPLES / f"{name}-HD-No-Audio.mp4"
+
+
+# ==================================================================
+# EVALUATION AGAINST VERIFIED KNOWLEDGE
+# ==================================================================
+
+def stamp_to_seconds(stamp):
+    minutes, rest = stamp.split(":")
+    return int(minutes) * 60 + float(rest)
+
+
+def known_items(name):
+    """-> list of (time, before, after, kind) from verified files. kind: chest | false | non-chest."""
+    items = []
+    if name == "Fortnite-PS5-Pro":
+        for stamp, real in fusion.load_verified_labels(SAMPLES / f"{name}-verified-predictions.txt").items():
+            items.append((stamp_to_seconds(stamp), 1.5, 1.5, "chest" if real else "false"))
+        for stamp, real in fusion.load_verified_labels(SAMPLES / f"{name}-verified-missed-candidates.txt").items():
+            # these times are interaction-prompt times; the event can sit a few seconds either side
+            items.append((stamp_to_seconds(stamp), 3.0, 4.0, "chest" if real else "non-chest"))
+    else:
+        from fortnite_chest_counter.detection import audio as detector
+        for t in detector.load_ground_truth(detector.GROUND_TRUTH_FILE):
+            items.append((float(t), 1.5, 1.5, "chest"))
+    return items
+
+
+def evaluate(events, name):
+    items = known_items(name)
+    chests = [k for k in items if k[3] == "chest"]
+    print(f"\n=== EVALUATION against verified knowledge ({len(chests)} known real chests, "
+          f"{sum(k[3] != 'chest' for k in items)} verified non-chests) ===")
+    for e in events:
+        match = [k for k in items if k[0] - k[1] <= e["time"] <= k[0] + k[2]]
+        k = min(match, key=lambda k: abs(k[0] - e["time"])) if match else None
+        e["_known"] = k
+        e["_class"] = {"chest": "real chest", "false": "verified-false popup", "non-chest": "verified non-chest"}[k[3]] if k else "unknown"
+    certain = [e for e in events if e["certain_counted"]]
+    approx = [e for e in events if e["approx_counted"]]
+
+    def breakdown(group):
+        out = {}
+        for e in group:
+            out[e["_class"]] = out.get(e["_class"], 0) + 1
+        return out
+
+    real_certain = sum(e["_class"] == "real chest" for e in certain)
+    print(f"CERTAIN count: {len(certain)}   by class: {breakdown(certain)}   precision {real_certain}/{len(certain)}"
+          if certain else "CERTAIN count: 0")
+    print(f"APPROX  count: {len(approx)}   by class: {breakdown(approx)}")
+    print(f"Known real chests: {len(chests)}   approx error: {len(approx) - len(chests):+d}   "
+          f"(unknown-class counted events could be real undiscovered chests)")
+    duplicates, represented = 0, 0
+    print("\nKnown real chests in the combined event stream:")
+    for k in sorted(chests):
+        hits = [e for e in events if e["_known"] is k]
+        duplicates += max(len(hits) - 1, 0)
+        if hits:
+            represented += 1
+            e = hits[0]
+            print(f"  {mmss(k[0])}  represented by {e['event_id']} {e['source']:18s} tier {e['adjusted_tier']:>6s}  "
+                  f"certain={'yes' if e['certain_counted'] else 'no ':3s} approx={'yes' if e['approx_counted'] else 'no'}")
+        else:
+            print(f"  {mmss(k[0])}  NOT represented by any event")
+    print(f"Represented: {represented}/{len(chests)}; certain-counted real: {real_certain}/{len(chests)}; "
+          f"approx-counted real: {sum(e['_class'] == 'real chest' for e in approx)}/{len(chests)}; "
+          f"duplicate events on the same chest: {duplicates}")
+    wrong = [e for e in approx if e["_class"] in ("verified-false popup", "verified non-chest")]
+    unknown = [e for e in approx if e["_class"] == "unknown"]
+    print(f"Counted but verified wrong: {len(wrong)}; counted with no verification yet: {len(unknown)}"
+          + (" -> " + ", ".join(f"{e['stamp']}({e['source']})" for e in unknown) if unknown else ""))
+
+
+# ==================================================================
+# COMMANDS
+# ==================================================================
+
+def cmd_simulate(args):
+    from fortnite_chest_counter import estimator
+
+    cfg, origin = make_config(args)
+    session = CounterSession(cfg, reset=args.reset)
+    video = Path(args.video) if args.video else hd_video_for(args.name)
+    state = session.state
+    if not args.reset and not args.start and (state["certain"] or state["approximate"]):
+        raise SystemExit(f"{session.state_path} already holds {session.fmt(state['certain'])} certain / "
+                         f"{session.fmt(state['approximate'])} approx. Use --reset to start over, "
+                         f"or --start SECONDS to continue a previous run.")
+    start = args.start or 0.0
+    session.save()
+    session.write_obs()
+    fps = cfg["detector"]["process_fps"]
+    print(f"Simulating {video.name} from {start:.0f}s{' to ' + str(args.until) + 's' if args.until else ''} "
+          f"({'real time' if args.realtime else 'fast'}); config {origin}; state {session.state_path}; "
+          f"OBS files {session.obs_dir}; log {session.log.path}")
+
+    est = estimator.ChestEstimator()
+    source = Mp4FrameSource(video, fps, start, args.until)
+    wall0, events, last_t = time.time(), [], start
+    for t, frame in source.frames():
+        last_t = t
+        events += session.apply(est.process_frame(t, frame), t)
+        if args.realtime:
+            ahead = (t - start) - (time.time() - wall0)
+            if ahead > 0:
+                time.sleep(ahead)
+    events += session.apply(est.flush(), last_t)
+    session.save()
+    session.write_obs()
+    print(f"\nFinished at {mmss(last_t)} in {time.time() - wall0:.0f}s wall time. CERTAIN {session.fmt(state['certain'])}, "
+          f"APPROX {session.fmt(state['approximate'])}, {len(events)} events logged")
+    if args.evaluate and args.name and not args.until and not args.start:
+        evaluate(events, args.name)
+
+
+def cmd_video(args):
+    """Count chests in a recorded gameplay video. Uses the same detector as live mode but never touches the live
+    counter: nothing is saved to state/, and the OBS-style text files go to video_output/ instead of obs_output/."""
+    from fortnite_chest_counter import estimator
+
+    banner()
+    video = Path(args.video)
+    if not video.is_file():
+        raise UserError(f"Video file not found: {video}\nDrag a video file (.mp4, .mkv, .mov ...) onto 'Count Video File.bat'.")
+    cfg, origin = make_config(args)
+    cfg["state"]["persist"] = False                     # a recording must never change the live counter
+    cfg["state"]["obs_dir"] = args.obs_dir or "video_output"
+    preflight(cfg)
+    session = CounterSession(cfg, reset=True)
+    state = session.state
+    fps = cfg["detector"]["process_fps"]
+    start = args.start or 0.0
+    print(f"Analysing {video.name} (settings: {origin}). This runs faster than real time; leave the window open.")
+    est = estimator.ChestEstimator()
+    source = Mp4FrameSource(video, fps, start, args.until)
+    wall0, last_t, frames, next_report = time.time(), start, 0, start + 60.0
+    try:
+        for t, frame in source.frames():
+            last_t, frames = t, frames + 1
+            session.apply(est.process_frame(t, frame), t)
+            if t >= next_report:
+                print(f"  ... {mmss(t)} of video analysed | CERTAIN {session.fmt(state['certain'])} | APPROX {session.fmt(state['approximate'])}")
+                next_report += 60.0
+        session.apply(est.flush(), last_t)
+    except KeyboardInterrupt:
+        print("\nStopped early; the numbers below cover only the part already analysed.")
+    if frames == 0:
+        raise UserError("No picture could be read from this file. Is it a video that your PC can play? "
+                        "(Details are printed just above if FFmpeg reported a problem.)")
+    session.write_obs()
+    print(f"\nFinished: {mmss(last_t)} of video analysed in {(time.time() - wall0) / 60:.1f} min.\n")
+    show_counts(session)
+    print("\n  APPROX is the estimated TOTAL and already includes the CERTAIN chests (do not add them together).")
+    print(f"  Text files saved in: {session.obs_dir.resolve()}")
+
+
+# ---- friendly-message building blocks -------------------------------------------------
+
+OBS_STEPS = """  1. Open OBS Studio
+  2. Click "Start Virtual Camera" (bottom-right "Controls" panel)
+  3. Run {app} again"""
+
+
+def banner():
+    print(f"{APP_NAME} v{__version__} ({RELEASE_CHANNEL})")
+
+
+def preflight(cfg, needs_video=True):
+    """First-run setup + check that the install is complete. Raises UserError with a fix."""
+    for folder in (Path(cfg["state"]["path"]).parent, Path(cfg["state"]["obs_dir"]), Path(cfg["logging"]["dir"])):
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise UserError(f"Cannot create the folder '{folder}' ({error}).\n"
+                            f"Move the {APP_NAME} folder somewhere you can write to (for example your Desktop or Documents), "
+                            f"not Program Files or a zip file.")
+    missing = paths.missing_templates()
+    if missing:
+        raise UserError("The installation is incomplete: some program files are missing "
+                        f"({', '.join(m.name for m in missing)}).\nExtract the whole zip again (do not run it from inside the zip) "
+                        "and keep every file and folder together.")
+    if needs_video and not paths.ffmpeg_executable():
+        raise UserError("The video helper (ffmpeg) was not found.\nExtract the whole zip again and keep the 'runtime' folder "
+                        "next to the program. If you deleted or moved it, re-download the app.")
+
+
+def disable_quick_edit():
+    """Clicking inside a Windows console pauses the program until a key is pressed. That would freeze counting,
+    so switch that behaviour off for the live window."""
+    try:
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.GetStdHandle(-10)
+        mode = ctypes.c_uint32()
+        if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel.SetConsoleMode(handle, (mode.value & ~0x0040) | 0x0080)
+    except Exception:
+        pass
+
+
+def quit_requested():
+    """True if the user pressed Q in the console window (no Ctrl+C needed, no 'terminate batch job?' prompt)."""
+    try:
+        import msvcrt
+        while msvcrt.kbhit():
+            if msvcrt.getwch().lower() == "q":
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _kernel32():
+    """kernel32 with typed signatures and per-call error codes (Windows only)."""
+    import ctypes
+    from ctypes import wintypes
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateMutexW.restype, k.CreateMutexW.argtypes = wintypes.HANDLE, (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
+    k.OpenMutexW.restype, k.OpenMutexW.argtypes = wintypes.HANDLE, (wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR)
+    k.CloseHandle.argtypes = (wintypes.HANDLE,)
+    return k
+
+
+def instance_mutex_name(state_path):
+    """One counter per counter file: the lock name is derived from the state file's full path."""
+    import hashlib
+    key = str(Path(state_path).resolve()).lower().encode("utf-8")
+    return "Local\\FortniteVisualChestCounter-" + hashlib.sha1(key).hexdigest()[:16]
+
+
+def counter_is_running(state_path):
+    """True while a live counter for this counter file is running (on this Windows session)."""
+    try:
+        k = _kernel32()
+        handle = k.OpenMutexW(0x00100000, False, instance_mutex_name(state_path))       # SYNCHRONIZE
+        if handle:
+            k.CloseHandle(handle)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+class ConsoleCloseGuard:
+    """
+    Closing the console window with X is a NORMAL way to stop the counter. Windows then sends CTRL_CLOSE_EVENT to the
+    console's processes and ends them ~5 s later (log-off / shutdown work the same way). This registers a real console
+    control handler (SetConsoleCtrlHandler, not Python's KeyboardInterrupt) that turns the event into a normal stop:
+    the frame source is told to stop, the live loop persists counts / OBS files / session_end and releases the lock,
+    and only then does the handler return. Bounded: the handler waits at most 4.5 s, inside Windows' grace period.
+    If Windows kills the process anyway, nothing breaks: counts are saved after every chest and the lock is a kernel
+    object that dies with the process. Ctrl+C is left to Python (KeyboardInterrupt).
+    """
+    EVENTS = {1: "Ctrl+Break", 2: "window closed (X)", 5: "Windows log-off", 6: "Windows shutdown"}
+    WAIT_SECONDS = 4.5
+
+    def __init__(self):
+        import threading
+        self.requested, self.done = threading.Event(), threading.Event()
+        self.reason = None
+        self.on_request = None              # set by the live loop: unblocks the frame source
+        self._handler = None
+
+    def __enter__(self):
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            def handler(kind):
+                if kind not in self.EVENTS:
+                    return False            # Ctrl+C -> Python's own handler -> KeyboardInterrupt
+                self.reason = self.EVENTS[kind]
+                self.requested.set()
+                if self.on_request:
+                    try:
+                        self.on_request()
+                    except Exception:
+                        pass
+                self.done.wait(self.WAIT_SECONDS)
+                return True
+
+            self._handler = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)(handler)
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(self._handler, True)
+        except Exception:
+            self._handler = None
+        return self
+
+    def __exit__(self, *exc):
+        self.done.set()
+
+
+class SingleInstance:
+    """
+    Two live counters sharing one counter file would fight, so a second one is refused. The lock is a Windows named
+    mutex: the kernel releases it automatically when the process ends, however it ends (X, crash, Task Manager, power
+    loss), so it can never be left behind and block a later start. (v0.1.0 used a live.lock file; a leftover one is
+    ignored and removed.)
+    """
+
+    def __init__(self, state_path):
+        self.state_path = Path(state_path)
+        self.name = instance_mutex_name(state_path)
+        self.handle = None
+
+    def __enter__(self):
+        import ctypes
+        try:
+            k = _kernel32()
+        except Exception:
+            return self                      # not Windows: no lock
+        handle = k.CreateMutexW(None, False, self.name)
+        if handle and ctypes.get_last_error() == 183:                                       # ERROR_ALREADY_EXISTS
+            k.CloseHandle(handle)
+            raise UserError(f"{APP_NAME} is already running in another window.\n"
+                            "Close this window and use the one that is already open (only one can run at a time).")
+        self.handle = handle
+        # Leftovers of a session Windows killed before it could finish: a v0.1.0 lock file, a half-written save.
+        # (The real counter file is always complete: saves are atomic, so the .tmp is simply discarded.)
+        for leftover in (self.state_path.with_name("live.lock"), self.state_path.with_name(self.state_path.name + ".tmp")):
+            try:
+                leftover.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return self
+
+    def __exit__(self, *exc):
+        if self.handle:
+            try:
+                _kernel32().CloseHandle(self.handle)
+            except Exception:
+                pass
+            self.handle = None
+
+
+def explain_source_failure(kind, label, error_text):
+    """Turn an ffmpeg/source failure into steps a streamer can follow."""
+    from fortnite_chest_counter.input import video_sources as sources
+
+    if kind == "obs-camera":
+        try:
+            names = [n for n, k in sources.list_video_devices() if k in ("video", "none")]
+        except Exception:
+            names = []
+        if "OBS Virtual Camera" not in names:
+            return ("OBS Virtual Camera was not found.\n\n" + OBS_STEPS.format(app=APP_NAME) +
+                    "\n\nStill not working? Update OBS Studio to version 28 or newer.")
+        return ("OBS Virtual Camera exists but is not sending video.\n\n"
+                "  1. In OBS, click \"Start Virtual Camera\" (it must show as running)\n"
+                "  2. Check the OBS preview is showing your game (the ChestDetectorFeed scene)\n"
+                f"  3. Run {APP_NAME} again")
+    if kind == "device":
+        return (f"Could not open the video device ({label}).\n\n"
+                "  - Run Diagnostics.bat to see the exact device names, then set [live] device in config.toml\n"
+                "  - Many capture cards can only be used by ONE program at a time. If OBS is already using it, "
+                "use the normal OBS Virtual Camera mode instead (recommended).")
+    if kind == "desktop":
+        return "Could not capture the screen. Try the recommended OBS Virtual Camera mode instead."
+    return f"Could not open the video source ({label}). Details: {error_text}"
+
+
+def friendly_rate_note(res):
+    if not res:
+        return
+    if abs(res[0] / res[1] - 16 / 9) > 0.05:
+        print(f"WARNING: the video is {res[0]}x{res[1]}, which is not 16:9. The picture will be stretched and the chest "
+              f"detection may not work. Make the ChestDetectorFeed scene 16:9 (for example 1920x1080).")
+    elif res[0] < 1280:
+        print(f"WARNING: the video is only {res[0]}x{res[1]}. Detection works best at 1280x720 or higher.")
+
+
+def cmd_live(args):
+    from fortnite_chest_counter import estimator
+    from fortnite_chest_counter.input import video_sources as sources
+
+    banner()
+    cfg, origin = make_config(args)
+    live = cfg["live"]
+    kind, fps = live["source"], cfg["detector"]["process_fps"]
+    preflight(cfg)
+    disable_quick_edit()
+    # exit order: the lock is removed first, then the close guard lets Windows end the process
+    with ConsoleCloseGuard() as guard, SingleInstance(cfg["state"]["path"]):
+        _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard)
+
+
+STATUS_LOG_SECONDS = 300            # a status record in the session log every 5 min (survives a hard kill)
+
+
+def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None):
+    session = CounterSession(cfg, reset=args.reset)
+    state = session.state
+    try:
+        source = sources.make_source(kind, fps, device=live["device"], monitor=live["monitor"],
+                                     video=args.video, start=args.start or 0.0, duration=args.duration)
+    except ValueError as error:
+        raise UserError(str(error))
+    print(f"Connecting to {source.label} ...")
+    try:
+        info = source.open(timeout=15.0)
+    except (RuntimeError, OSError) as error:
+        raise UserError(explain_source_failure(kind, source.label, str(error))) from error
+    res, in_fps = info["input_resolution"], info["input_fps"]
+    print(f"Connected: video {res[0]}x{res[1]} @ {in_fps} fps" if res else "Connected.",
+          f"-> analysed at {fps} frames per second")
+    friendly_rate_note(res)
+    print(f"Settings: {origin}")
+    print("Counter: " + (f"continuing from {session.fmt(state['certain'])} certain / {session.fmt(state['approximate'])} approx"
+                         if session.loaded_existing else "starting at 0 / 0")
+          + ("" if session.persist else " (saving is turned off in config.toml)"))
+    print(f"OBS text files: {session.obs_dir.resolve()}")
+    print("Counting has started. Counts are kept when you stop and restart.")
+    print("To stop: press Q in this window (or Ctrl+C, or just close the window). Nothing is lost.\n")
+
+    est = estimator.ChestEstimator()
+    session.save()
+    session.write_obs()
+    session.log.write({"event": "session_start", "app_version": __version__, "source_type": kind, "source": source.label,
+                       "input_resolution": res, "input_fps": in_fps, "normalized": [sources.WIDTH, sources.HEIGHT],
+                       "process_fps": fps, "session_started": now_iso(), "config": origin})
+    interval = live["status_interval_seconds"]
+    recent = deque(maxlen=300)                              # bounded: a 12-hour stream must not grow memory
+    n_frames, total_s, max_s = 0, 0.0, 0.0
+    last_status, cpu0, wall0 = time.monotonic(), time.process_time(), time.monotonic()
+    last_sync = last_status_log = time.monotonic()
+    processed_at_status = processed_at_log = 0
+    stop_reason = "stream ended"
+    if guard is not None:
+        guard.on_request = source.request_stop
+    try:
+        for t, frame in source.frames():
+            if guard is not None and guard.requested.is_set():
+                break
+            if args.duration and t >= args.duration:          # applies to every source type
+                stop_reason = "duration reached"
+                break
+            t0 = time.perf_counter()
+            session.apply(est.process_frame(t, frame), t)
+            dt = time.perf_counter() - t0
+            recent.append(dt)
+            n_frames, total_s, max_s = n_frames + 1, total_s + dt, max(max_s, dt)
+            now_m = time.monotonic()
+            if quit_requested():
+                stop_reason = "Q pressed"
+                break
+            if now_m - last_sync >= 1.0:
+                last_sync = now_m
+                if session.sync_external_changes():
+                    print(f"  Counter changed by Reset/Adjust -> CERTAIN {session.fmt(state['certain'])} | "
+                          f"APPROX {session.fmt(state['approximate'])}")
+            if now_m - last_status >= interval:
+                span = now_m - last_status
+                det_fps = (source.frames_processed - processed_at_status) / span
+                print(f"LIVE  {det_fps:4.1f} detector fps | source {in_fps or '?'} fps | CERTAIN {session.fmt(state['certain'])} "
+                      f"| APPROX {session.fmt(state['approximate'])} | dropped {session.fmt(source.frames_dropped)} "
+                      f"| {1000 * np.mean(recent):.0f} ms/frame")
+                last_status, processed_at_status = now_m, source.frames_processed
+            if now_m - last_status_log >= STATUS_LOG_SECONDS:
+                span = now_m - last_status_log
+                session.log.write({"event": "status", "t": round(t, 1), "logged_at": now_iso(),
+                                   "detector_fps": round((source.frames_processed - processed_at_log) / span, 2),
+                                   "frames_dropped_total": source.frames_dropped,
+                                   "avg_frame_ms_recent": round(1000 * float(np.mean(recent)), 1),
+                                   "max_frame_ms_so_far": round(1000 * max_s, 1),
+                                   "certain": state["certain"], "approximate": state["approximate"]})
+                last_status_log, processed_at_log = now_m, source.frames_processed
+        else:
+            if guard is not None:
+                # Closing the window sends the close event to every process in it; FFmpeg usually exits first, so
+                # the video "ends" a moment before our own handler runs. Give it a moment to tell the two apart.
+                guard.requested.wait(0.5)
+            if stop_reason == "stream ended" and kind in ("obs-camera", "device", "desktop") \
+                    and not (guard is not None and guard.requested.is_set()):
+                stop_reason = "video source stopped"
+                print("\nThe video stopped coming in (was OBS or the Virtual Camera closed?).")
+    except KeyboardInterrupt:
+        stop_reason = "Ctrl+C"
+    except OSError:
+        if not (guard is not None and guard.requested.is_set()):
+            raise                                           # a real error; only a vanished console is expected here
+    finally:
+        closing = guard is not None and guard.requested.is_set()
+        if closing:
+            stop_reason = guard.reason or "window closed (X)"
+        # Persist first (the console may already be gone when the window was closed), print last.
+        session.apply(est.flush(), source.elapsed(), quiet=closing)
+        session.save()
+        session.write_obs()
+        source.close(wait=not closing)
+        wall = max(time.monotonic() - wall0, 1e-9)
+        stats = {"event": "session_end", "stop_reason": stop_reason, "seconds": round(wall, 1),
+                 "frames_processed": source.frames_processed, "frames_dropped": source.frames_dropped,
+                 "detector_fps": round(source.frames_processed / wall, 2),
+                 "avg_frame_ms": round(1000 * total_s / n_frames, 1) if n_frames else None,
+                 "max_frame_ms": round(1000 * max_s, 1) if n_frames else None,
+                 "cpu_percent_of_one_core": round(100 * (time.process_time() - cpu0) / wall, 1),
+                 "counted_event_latency_s": {"avg": round(float(np.mean(session.latencies)), 2) if session.latencies else None,
+                                             "max": round(float(np.max(session.latencies)), 2) if session.latencies else None},
+                 "certain": state["certain"], "approximate": state["approximate"]}
+        session.log.write(stats)
+        try:
+            print(f"\nStopped ({stop_reason}). Analysed {stats['frames_processed']:,} frames in "
+                  f"{stats['seconds'] / 60:.1f} min, {stats['frames_dropped']:,} dropped. (Full details: {session.log.path or 'logging is off'})")
+            print(f"{session.display['certain_label']}: {session.fmt(state['certain'])} | "
+                  f"{session.display['approximate_label']}: {session.fmt(state['approximate'])}")
+        except (OSError, ValueError):
+            pass                                            # no console any more (window closed)
+
+
+def cmd_devices(args):
+    from fortnite_chest_counter.input import video_sources as sources
+
+    banner()
+    if not paths.ffmpeg_executable():
+        raise UserError("The video helper (ffmpeg) was not found; see the README.")
+    print("Video devices (usable with: live --source device --device \"NAME\"):")
+    found = False
+    for name, kind in sources.list_video_devices():
+        if kind in ("video", "none"):
+            found = True
+            note = "   <- start 'Start Virtual Camera' in OBS to use the normal mode" if name == "OBS Virtual Camera" else ""
+            print(f"  {name}{note}")
+    if not found:
+        print("  (none found)")
+    print("\nMonitors (usable with: live --source desktop --monitor N):")
+    for i, (x, y, w, h) in enumerate(sources.list_monitors(), 1):
+        print(f"  {i}: {w}x{h} at ({x},{y})")
+
+
+def show_counts(session):
+    print(f"  {session.display['certain_label']}: {session.fmt(session.state['certain'])}")
+    print(f"  {session.display['approximate_label']}: {session.fmt(session.state['approximate'])}")
+
+
+def cmd_show(args):
+    banner()
+    cfg, _ = make_config(args)
+    preflight(cfg, needs_video=False)
+    session = CounterSession(cfg)
+    session.write_obs()
+    print("\nCurrent counter:")
+    show_counts(session)
+    print("\n  (CERTAIN is part of APPROX: APPROX is the estimated total.)")
+    if args.json:
+        print(json.dumps(session.state, indent=2, ensure_ascii=False))
+
+
+def cmd_reset(args):
+    banner()
+    cfg, _ = make_config(args)
+    preflight(cfg, needs_video=False)
+    old = CounterSession(cfg)
+    session = CounterSession(cfg, reset=True)
+    session.save()
+    session.write_obs()
+    session.log.write({"event_id": "MANUAL", "source": "manual", "action": "reset", "previous": {
+        "certain": old.state["certain"], "approximate": old.state["approximate"]}, "logged_at": now_iso()})
+    print(f"\nWas: CERTAIN {old.fmt(old.state['certain'])} / APPROX {old.fmt(old.state['approximate'])}")
+    print("\nCounter reset:")
+    print(f"  CERTAIN: {session.fmt(0)}")
+    print(f"  APPROX: {session.fmt(0)}")
+    if counter_is_running(cfg["state"]["path"]):
+        print("\nIf the counter window is open, it picks up the new numbers within a second.")
+
+
+def cmd_adjust(args):
+    banner()
+    cfg, _ = make_config(args)
+    preflight(cfg, needs_video=False)
+    session = CounterSession(cfg)
+    st = session.state
+    st["certain"] = max(st["certain"] + args.certain, 0)
+    st["approximate"] = max(st["approximate"] + args.approx, 0)
+    st["approximate"] = max(st["approximate"], st["certain"])      # APPROX is the total and includes CERTAIN
+    st["events_logged"] += 1
+    session.save()
+    session.write_obs()
+    session.log.write({"event_id": f"E{st['events_logged']:04d}", "source": "manual", "action": "adjust",
+                       "certain_increment": args.certain, "approx_increment": args.approx,
+                       "counts_after": {"certain": st["certain"], "approximate": st["approximate"]}, "logged_at": now_iso()})
+    print("Counter adjusted:")
+    show_counts(session)
+
+
+def short_path(path):
+    """Paths in support reports: hide the Windows user name."""
+    text = str(path)
+    home = str(Path.home())
+    return text.replace(home, "%USERPROFILE%") if home and home in text else text
+
+
+def cmd_diagnostics(args):
+    import platform
+    from fortnite_chest_counter.input import video_sources as sources
+
+    lines = []
+
+    def out(text=""):
+        lines.append(text)
+        print(text)
+
+    out(f"=== {APP_NAME} diagnostics ===")
+    out(f"App version:      {__version__} ({RELEASE_CHANNEL}), {'packaged' if paths.FROZEN else 'running from source'}")
+    out(f"Windows:          {platform.platform()}")
+    out(f"Program folder:   {short_path(paths.APP_DIR)}")
+    cfg, origin, warnings = settings.load_config(getattr(args, "config", None))
+    out(f"Settings:         {origin}" + (f"  ({len(warnings)} warning(s))" if warnings else ""))
+    for w in warnings:
+        out(f"  ! {w}")
+    det = cfg["detector"]
+    out(f"Detector:         {det['process_fps']} fps | languages {det['languages']} | certain_min_tier {det['certain_min_tier']} | "
+        f"medium_counts_alone {det['medium_counts_alone_languages']}")
+    out(f"Live source:      {cfg['live']['source']}")
+    ff = paths.ffmpeg_executable()
+    if ff:
+        try:
+            version_line = subprocess.run([ff, "-version"], capture_output=True, text=True, timeout=10).stdout.splitlines()[0]
+        except Exception as error:
+            version_line = f"could not run ({error})"
+        out(f"FFmpeg:           {short_path(ff)}  [{version_line}]")
+    else:
+        out("FFmpeg:           NOT FOUND")
+    missing = paths.missing_templates()
+    out("Templates:        " + ("all present" if not missing else "MISSING: " + ", ".join(m.name for m in missing)))
+    for label, folder in (("state", Path(cfg["state"]["path"]).parent), ("obs_output", Path(cfg["state"]["obs_dir"])),
+                          ("logs", Path(cfg["logging"]["dir"]))):
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            probe = folder / ".write_test"
+            probe.write_text("ok")
+            probe.unlink()
+            status = "writable"
+        except OSError as error:
+            status = f"NOT writable ({error})"
+        out(f"Folder {label + ':':11s} {status}")
+    try:
+        state = load_state(cfg["state"]["path"], warn=lambda m: out(f"  ! {m}"))
+        out(f"Counter:          CERTAIN {state['certain']} / APPROX {state['approximate']}")
+    except Exception as error:
+        out(f"Counter:          unreadable ({error})")
+    if ff:
+        try:
+            devices = [(n, k) for n, k in sources.list_video_devices() if k in ("video", "none")]
+        except Exception as error:
+            devices = []
+            out(f"Video devices:    could not list ({error})")
+        else:
+            out("Video devices:    " + (", ".join(n for n, _ in devices) if devices else "(none found)"))
+        if any(n == "OBS Virtual Camera" for n, _ in devices):
+            try:
+                src = sources.make_source("obs-camera", det["process_fps"])
+                info = src.open(timeout=8.0)
+                src.close()
+                res = info["input_resolution"]
+                out(f"OBS Virtual Camera: running, sending video {res[0]}x{res[1]} @ {info['input_fps']} fps" if res
+                    else "OBS Virtual Camera: running, sending video")
+            except Exception:
+                out("OBS Virtual Camera: found but NOT sending video (click 'Start Virtual Camera' in OBS)")
+        else:
+            out("OBS Virtual Camera: NOT found (open OBS Studio 28+ and click 'Start Virtual Camera')")
+        try:
+            out("Monitors:         " + ", ".join(f"{w}x{h}" for _, _, w, h in sources.list_monitors()))
+        except Exception:
+            pass
+    out("\n(Copy everything above into your support message. It contains no account or personal data;"
+        " device names are listed as Windows reports them.)")
+    try:
+        target = Path(cfg["logging"]["dir"]) / "diagnostics.txt"
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"A copy was saved to {target}")
+    except OSError:
+        pass
+
+
+def cmd_evaluate(args):
+    events = [json.loads(line) for line in Path(args.log).read_text(encoding="utf-8").splitlines() if line.strip()]
+    events = [e for e in events if e.get("source") not in ("manual", None) and "time" in e]
+    evaluate(events, args.name)
+
+
+def report_crash(error):
+    """Unexpected bug: keep the full traceback in logs/ for a bug report, show the user something calm."""
+    import platform
+    import traceback
+
+    where = None
+    try:
+        log_dir = Path("logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        where = log_dir / f"crash_{datetime.now():%Y%m%d_%H%M%S}.txt"
+        where.write_text(f"{APP_NAME} v{__version__} on {platform.platform()}\n\n"
+                         + "".join(traceback.format_exception(type(error), error, error.__traceback__)), encoding="utf-8")
+    except OSError:
+        pass
+    print(f"\nSomething unexpected went wrong ({type(error).__name__}: {error}).")
+    print("Your counter is safe - it is saved after every chest.")
+    if where:
+        print(f"Technical details were saved to: {where}")
+    print("If it keeps happening, send that file (and the output of the Diagnostics launcher) when you report the problem.")
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="Fortnite Visual Chest Counter", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} v{__version__} ({RELEASE_CHANNEL})")
+    sub = parser.add_subparsers(dest="command")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--config", help="config file (default: config.toml if it exists)")
+    common.add_argument("--state", help="override [state] path")
+    common.add_argument("--obs-dir", help="override [state] obs_dir")
+    common.add_argument("--log-dir", help="override [logging] dir")
+    common.add_argument("--process-fps", type=int, help="override [detector] process_fps")
+
+    p = sub.add_parser("simulate", parents=[common], help="(development) run a recorded video through the live pipeline")
+    p.add_argument("--name", help="recording name, e.g. Fortnite-PS5-Pro")
+    p.add_argument("--video", help="explicit HD video path (overrides --name)")
+    p.add_argument("--start", type=float, default=0.0)
+    p.add_argument("--until", type=float)
+    p.add_argument("--realtime", action="store_true", help="pace processing to video time (default: as fast as possible)")
+    p.add_argument("--reset", action="store_true")
+    p.add_argument("--no-evaluate", dest="evaluate", action="store_false")
+    p.set_defaults(func=cmd_simulate)
+
+    p = sub.add_parser("live", parents=[common], help="count chests from a live video source (the default)")
+    p.add_argument("--source", choices=["obs-camera", "device", "desktop", "file"], help="override [live] source")
+    p.add_argument("--device", help="DirectShow device name for --source device")
+    p.add_argument("--monitor", type=int, help="monitor number for --source desktop")
+    p.add_argument("--video", help="video file for --source file (played in real time; for testing)")
+    p.add_argument("--start", type=float, help="start offset in seconds for --source file")
+    p.add_argument("--duration", type=float, help="stop after this many seconds (default: run until Ctrl+C)")
+    p.add_argument("--reset", action="store_true", help="zero the counts first (counts are otherwise kept)")
+    p.set_defaults(func=cmd_live)
+
+    p = sub.add_parser("video", parents=[common], help="count chests in a recorded gameplay video file")
+    p.add_argument("video", help="path to the video file")
+    p.add_argument("--start", type=float, help="start at this many seconds")
+    p.add_argument("--until", type=float, help="stop at this many seconds")
+    p.set_defaults(func=cmd_video)
+
+    sub.add_parser("devices", help="list video devices and monitors").set_defaults(func=cmd_devices)
+    sub.add_parser("diagnostics", parents=[common], help="print a support report").set_defaults(func=cmd_diagnostics)
+    p = sub.add_parser("show", parents=[common], help="print the current counts")
+    p.add_argument("--json", action="store_true", help="also print the raw saved state")
+    p.set_defaults(func=cmd_show)
+    sub.add_parser("reset", parents=[common], help="set both counts to 0").set_defaults(func=cmd_reset)
+    p = sub.add_parser("adjust", parents=[common], help="manually correct the counts")
+    p.add_argument("--certain", type=int, default=0)
+    p.add_argument("--approx", type=int, default=0)
+    p.set_defaults(func=cmd_adjust)
+    p = sub.add_parser("evaluate", help="(development) score a session log against verified knowledge")
+    p.add_argument("--name", required=True)
+    p.add_argument("--log", required=True)
+    p.set_defaults(func=cmd_evaluate)
+    return parser
+
+
+def main(argv=None):
+    paths.setup_environment()                 # run from the program folder; prefer the bundled ffmpeg
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:                              # double-clicking the .exe = the normal live mode
+        argv = ["live"]
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        args.func(args)
+        return 0
+    except UserError as error:
+        print(f"\n{error}")
+        return 1
+    except KeyboardInterrupt:
+        return 0
+    except SystemExit:
+        raise
+    except Exception as error:                # a bug, not a setup problem
+        report_crash(error)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

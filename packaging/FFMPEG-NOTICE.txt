@@ -1,0 +1,22 @@
+FFmpeg (bundled video helper)
+=============================
+
+Fortnite Visual Chest Counter uses FFmpeg (ffmpeg.exe, in this folder) ONLY to read video frames from
+OBS Virtual Camera / a capture card / a screen / a video file. It is run as a separate program;
+Fortnite Visual Chest Counter does not link against it and does not modify it.
+
+This ffmpeg.exe is an unmodified, pre-built LGPL v3 build of FFmpeg (no GPL or non-free components,
+no libx264/libx265) made by the community builds of BtbN: https://github.com/BtbN/FFmpeg-Builds
+FFmpeg is (c) the FFmpeg developers and licensed under the GNU Lesser General Public License v3.
+The licence text is in LICENSE.txt next to this file.
+
+Corresponding source code
+-------------------------
+  FFmpeg source for this exact build : https://github.com/FFmpeg/FFmpeg/tree/{commit}
+                                       (also attached to the GitHub release of this program as
+                                        ffmpeg-source-{short}.tar.gz)
+  Build scripts used for the binary  : https://github.com/BtbN/FFmpeg-Builds
+  FFmpeg project                     : https://ffmpeg.org/   (source: https://ffmpeg.org/download.html)
+
+You may replace this ffmpeg.exe with another FFmpeg build of your choice (it must support the
+"dshow" and "gdigrab" inputs).

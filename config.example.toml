@@ -1,0 +1,65 @@
+# Fortnite Visual Chest Counter - OPTIONAL settings
+# ------------------------------------------------------------------------------------------
+# You do NOT need this file. Without it the program uses the defaults shown here.
+# To change something: copy this file, rename the copy to  config.toml  (same folder as the
+# program), edit it with Notepad, save, and start the counter again.
+# Anything you leave out keeps its default. A typo shows a warning and uses the default.
+# Lines starting with # are comments.
+
+[detector]
+# Which languages Fortnite is set to. "en" = English (CHEST), "pt" = Portuguese (BAU).
+# Using only your language gives slightly fewer false alarms:  languages = ["en"]
+languages = ["en", "pt"]
+
+# How many frames per second are analysed (5-30). 15 is what the detector was tested at.
+process_fps = 15
+
+# Which strong detections go into the CERTAIN count:
+#   "HIGH"    = high and very-high confidence (default)
+#   "CERTAIN" = only the very-high ones (stricter; CERTAIN will be lower)
+# Either way, every certain chest is also included in APPROX.
+certain_min_tier = "HIGH"
+
+# APPROX is the estimated TOTAL (it already includes the certain chests). These switches
+# decide which weaker evidence is allowed to add to APPROX only.
+count_supported_medium_as_approx = true     # medium popup + the "open chest" button + a chest-looking object
+count_interaction_object_as_approx = true   # button + chest-looking object, even if the popup was missed
+medium_counts_alone_languages = ["en"]      # languages whose medium-confidence popup counts by itself
+
+[display]
+# The text shown in your OBS text sources.
+certain_label = "CERTAIN OPENED CHESTS"
+approximate_label = "APPROX. OPENED CHESTS"
+# The one-line file chest_status.txt. Placeholders: {certain} and {approximate}
+combined_status_format = "{certain} certain • ~{approximate} estimated"
+# true -> 1,232      false -> 1232
+use_thousands_separator = true
+
+[state]
+# Keep the counts when the program is closed and reopened.
+persist = true
+path = "state/chest_state.json"
+# Folder where the OBS text files are written.
+obs_dir = "obs_output"
+
+[logging]
+enabled = true
+# Also record detections that were NOT counted (useful when reporting a problem).
+log_candidates = true
+# Save a small picture of the pop-up area for every pop-up the counter considered (counted or not) into
+# logs/snapshots/. Turn on if you want to report missed or wrong chests: the pictures show exactly what it saw.
+save_snapshots = false
+dir = "logs"
+
+[live]
+# Where the video comes from:
+#   "obs-camera" = OBS Virtual Camera (recommended; single PC and dual PC)
+#   "device"     = a capture card opened directly (advanced; set "device" below)
+#   "desktop"    = capture a monitor (fallback, easily disturbed by other windows)
+source = "obs-camera"
+# Only for source = "device": the exact device name (Diagnostics.bat lists the names).
+device = "OBS Virtual Camera"
+# Only for source = "desktop": which monitor (1 = the first).
+monitor = 1
+# How often the status line is printed, in seconds.
+status_interval_seconds = 5

@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fortnite Visual Chest Counter - Setup Guide</title>
+<style>
+  :root { --bg:#ffffff; --fg:#1d2330; --muted:#5b6475; --card:#f3f5fa; --line:#d8dde8; --accent:#5b3fd1; --ok:#0f7a4a; --warn:#9a5b00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14171f; --fg:#e8ebf3; --muted:#9aa3b5; --card:#1d2230; --line:#303749; --accent:#a592ff; --ok:#5fd39b; --warn:#f0b35a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 820px; margin: 0 auto; padding: 28px 18px 80px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; }
+  h2 { margin-top: 2.4rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: 1.45rem; }
+  h3 { margin-top: 1.6rem; font-size: 1.1rem; }
+  .sub { color: var(--muted); margin: 0 0 22px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin: 14px 0; }
+  .big { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 640px) { .big { grid-template-columns: 1fr; } }
+  .big .card h3 { margin-top: 0; color: var(--accent); }
+  code, kbd { background: var(--card); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font: 0.92em Consolas, monospace; }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; font: 0.9em/1.45 Consolas, monospace; }
+  ol, ul { padding-left: 1.3rem; } li { margin: 4px 0; }
+  .note { border-left: 4px solid var(--accent); padding: 4px 14px; margin: 14px 0; background: var(--card); border-radius: 0 8px 8px 0; }
+  .warn { border-left-color: var(--warn); }
+  .ok { color: var(--ok); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.95em; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--card); }
+  nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+  a { color: var(--accent); }
+  .diagram { font: 0.95em/1.5 Consolas, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; overflow-x: auto; white-space: pre; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Fortnite Visual Chest Counter</h1>
+<p class="sub">Visual chest detection for OBS, capture cards &amp; video files &middot; v0.1.0 public beta &middot; Windows 10 / 11 &middot; no Python or programming needed</p>
+
+<h2 style="border-top:none;margin-top:1rem">What this is</h2>
+<p>A small helper for streamers. It watches your gameplay picture (through OBS) and keeps a running count of
+the <b>chests you open</b> in Fortnite. It writes the numbers into text files that you show on stream with a normal OBS
+text source. You choose the font, size and colours in OBS. It does not touch Fortnite, the game files or your account:
+it only looks at the video picture, like a viewer would.</p>
+
+<div class="big">
+  <div class="card">
+    <h3>CERTAIN OPENED CHESTS</h3>
+    Chests the counter is <b>strongly confident</b> about. A safe, conservative number.
+  </div>
+  <div class="card">
+    <h3>APPROX. OPENED CHESTS</h3>
+    The <b>estimated TOTAL</b> of opened chests, <b>including the certain ones</b>. It also adds chests where the
+    evidence was a bit weaker.
+  </div>
+</div>
+
+<div class="note"><b>Important - the two numbers are NOT added together.</b><br>
+<code>CERTAIN: 12</code> and <code>APPROX: 47</code> means &ldquo;about <b>47</b> chests in total, and <b>12</b> of those I am very sure about&rdquo;.
+It does <i>not</i> mean 59. APPROX is always the same as or higher than CERTAIN.</div>
+
+<p><b>This is a public beta.</b> APPROX is an <i>estimate</i>, not a perfect count. In our recorded test streams it matched the real
+number closely, but computer vision is never 100%. See <a href="#limits">Known limitations</a>.</p>
+
+<nav><ul>
+  <li><a href="#need">What you need</a></li>
+  <li><a href="#single">Single-PC setup</a></li>
+  <li><a href="#dual">Two-PC setup</a></li>
+  <li><a href="#overlay">Show it on stream</a></li>
+  <li><a href="#video">Recorded video</a></li>
+  <li><a href="#reset">Reset</a></li>
+  <li><a href="#settings">Settings</a></li>
+  <li><a href="#update">Updating</a></li>
+  <li><a href="#help">Troubleshooting</a></li>
+  <li><a href="#limits">Limitations</a></li>
+</ul></nav>
+
+<h2 id="need">What you need</h2>
+<ul>
+  <li>Windows 10 or 11 on the PC that runs <b>OBS</b> (your streaming PC if you have two).</li>
+  <li><b>OBS Studio 28 or newer</b> (it has the Virtual Camera built in).</li>
+  <li>Fortnite shown in a <b>16:9</b> picture (1920&times;1080 is ideal; 1280&times;720 or higher works) with the <b>normal HUD</b> visible, in <b>English or Brazilian Portuguese</b>.</li>
+  <li>About half of one CPU core. No graphics card needed.</li>
+  <li><b>Nothing else to install.</b> The video helper (FFmpeg) is already inside the folder.</li>
+</ul>
+
+<h2 id="quick">The 30-second version</h2>
+<ol>
+  <li>Unzip the folder anywhere you can write files (Desktop or Documents is fine).</li>
+  <li>In OBS: make a scene called <b>ChestDetectorFeed</b> with only your game in it, and start the <b>Virtual Camera</b> from that scene.</li>
+  <li>Double-click <b>Start Chest Counter.bat</b> and play.</li>
+  <li>In OBS, add two <b>Text</b> sources that read <code>obs_output\certain_chests.txt</code> and <code>obs_output\approximate_chests.txt</code>.</li>
+</ol>
+<p>Details for each step are below.</p>
+
+<h2 id="single">Single-PC setup (game and OBS on the same PC)</h2>
+
+<h3>1. Unzip</h3>
+<p>Right-click the zip &rarr; <b>Extract All</b>. Do <b>not</b> run it from inside the zip, and don&rsquo;t put it in <i>Program Files</i>.
+The folder contains:</p>
+<pre>Fortnite Visual Chest Counter.exe (the program; you normally don't open this directly)
+Start Chest Counter.bat        &lt;- the one you double-click
+Reset Counter.bat              set both counts to 0
+Show Counter.bat               look at the current counts
+Count Video File.bat           drag a recorded video onto this file to count it
+Diagnostics.bat                for support, if something does not work
+README.html                    this guide
+config.example.toml            optional settings (see "Settings")
+obs_output\                    the text files OBS reads
+state\  logs\                  your counter and logs (kept when you update)
+runtime\                       program files - don't touch</pre>
+
+<h3>2. Make a clean feed for the counter in OBS</h3>
+<p>The counter must see <b>only the game picture</b> (no webcam, alerts or overlays covering the screen). The easiest way is a separate scene that you never show on stream.</p>
+<ol>
+  <li>Open <b>OBS</b>. In the <b>Scenes</b> box click <b>+</b> and name the scene exactly <code>ChestDetectorFeed</code>.</li>
+  <li>In the <b>Sources</b> box click <b>+</b> &rarr; <b>Game Capture</b> &rarr; OK. Set <i>Mode</i> to &ldquo;Capture specific window&rdquo; and choose Fortnite (start Fortnite first so it appears in the list). If Game Capture shows a black picture, use <b>Display Capture</b> instead.</li>
+  <li>Make Fortnite <b>fill the whole scene</b>: select the source and press <kbd>Ctrl</kbd>+<kbd>F</kbd> (&ldquo;Fit to screen&rdquo;).</li>
+  <li><b>Do not</b> add a webcam, alerts, chat or the chest-counter text to this scene.</li>
+</ol>
+
+<h3>3. Start the Virtual Camera from that scene</h3>
+<ol>
+  <li>In OBS, find the <b>Controls</b> box (bottom-right). Click the small <b>gear</b> next to <b>Start Virtual Camera</b>.</li>
+  <li>Set <i>Output Type</i> to <b>Scene</b> and <i>Output Selection</i> to <b>ChestDetectorFeed</b>. Close the window.</li>
+  <li>Click <b>Start Virtual Camera</b>. It now shows as running.</li>
+</ol>
+<p>Your normal stream scene is unaffected: viewers still see whatever scene you choose. The counter reads <i>only</i> ChestDetectorFeed.</p>
+
+<h3>4. Start the counter</h3>
+<p>Double-click <b>Start Chest Counter.bat</b>. A black window opens and shows lines like:</p>
+<pre>Connected: video 1920x1080 @ 30.0 fps -&gt; analysed at 15 frames per second
+Counting has started. Counts are kept when you stop and restart.
+LIVE  15.0 detector fps | source 30.0 fps | CERTAIN 0 | APPROX 0 | dropped 0 | 6 ms/frame</pre>
+<p>Leave that window open while you play (minimise it if you like). Each time a chest is counted a line is printed.
+To stop: press <kbd>Q</kbd> in the window, or just close it. Your numbers are saved after every chest.</p>
+<p>If you see <i>&ldquo;OBS Virtual Camera was not found&rdquo;</i>, follow the three steps it prints (open OBS, Start Virtual Camera, run again).</p>
+
+<h3>5. Show the numbers on stream</h3>
+<p>See <a href="#overlay">Show it on stream</a> below.</p>
+
+<h2 id="dual">Two-PC setup (gaming PC + streaming PC with a capture card)</h2>
+<div class="diagram">Gaming PC / console
+   &#8595; HDMI
+Capture card
+   &#8595;
+Streaming PC &#8594; OBS &#8594; scene "ChestDetectorFeed" &#8594; Virtual Camera &#8594; Fortnite Visual Chest Counter</div>
+<ul>
+  <li>Install and run the counter on the <b>streaming PC</b> (the one running OBS). <b>Nothing</b> needs to run or be installed on the gaming PC or console.</li>
+  <li>In OBS on the streaming PC, create the <code>ChestDetectorFeed</code> scene and add your capture card as a <b>Video Capture Device</b> source. Make it <b>fill the scene</b> (<kbd>Ctrl</kbd>+<kbd>F</kbd>). Nothing else goes in this scene.</li>
+  <li>Set the Virtual Camera to <b>Scene &rarr; ChestDetectorFeed</b> and click <b>Start Virtual Camera</b> (exact clicks in step 3 above).</li>
+  <li>Double-click <b>Start Chest Counter.bat</b> &mdash; the same launcher as everyone else.</li>
+</ul>
+<div class="note warn"><b>Advanced: reading the capture card directly (no Virtual Camera).</b> Possible, but many capture cards can only be opened by <b>one</b> program at a time, so it does not work while OBS is using the card.
+To try: make a copy of <code>config.example.toml</code> named <code>config.toml</code>, set <code>source = "device"</code> and <code>device = "exact device name"</code> under <code>[live]</code>
+(<b>Diagnostics.bat</b> lists the names), and start the counter. If it says the device cannot be opened, switch back to the Virtual Camera method.</div>
+
+<h2 id="overlay">Show it on stream (OBS text sources)</h2>
+<p>The counter only writes the <i>text</i>. You style it in OBS however you like.</p>
+<ol>
+  <li>Open the scene your <b>viewers see</b> (not ChestDetectorFeed).</li>
+  <li>In <b>Sources</b> click <b>+</b> &rarr; <b>Text (GDI+)</b> &rarr; name it &ldquo;Certain chests&rdquo; &rarr; OK.</li>
+  <li>Tick <b>Read from file</b>, click <b>Browse</b> and choose <code>obs_output\certain_chests.txt</code> (inside the counter folder).</li>
+  <li>Choose a font, size and colour. Click OK and place it on screen.</li>
+  <li>Repeat for <code>obs_output\approximate_chests.txt</code> (name it &ldquo;Approx chests&rdquo;).</li>
+</ol>
+<table>
+  <tr><th>File (in <code>obs_output</code>)</th><th>Shows</th></tr>
+  <tr><td><code>certain_chests.txt</code></td><td><code>CERTAIN OPENED CHESTS: 12</code></td></tr>
+  <tr><td><code>approximate_chests.txt</code></td><td><code>APPROX. OPENED CHESTS: 47</code></td></tr>
+  <tr><td><code>chest_status.txt</code></td><td>One compact line: <code>12 certain &bull; ~47 estimated</code> &mdash; use this instead if you only want a single text source.</td></tr>
+  <tr><td><code>last_chest.txt</code></td><td>The most recent chest, e.g. <code>CHEST +1 &bull; HIGH</code>.</td></tr>
+</table>
+<p>Numbers over 999 get a thousands separator (<code>1,232</code>). Only the counter writes these files; don&rsquo;t edit them by hand.
+The words (&ldquo;CERTAIN OPENED CHESTS&rdquo;&hellip;) can be changed in <code>config.toml</code>.</p>
+<div class="note">Put these text sources only in the scene your <b>viewers</b> see, never in ChestDetectorFeed.</div>
+
+<h2 id="video">Counting a recorded video</h2>
+<p>The counter can also analyse a prerecorded gameplay video (.mp4, .mkv, .mov&hellip;). <b>Drag the video file and drop it onto
+<code>Count Video File.bat</code>.</b> It runs faster than real time, prints each counted chest and a progress line every minute of video,
+and finishes with the CERTAIN and APPROX numbers (APPROX includes CERTAIN). This <b>never changes your live counter</b>; result text files go to
+<code>video_output\</code>. The video should be clean 16:9 gameplay with the normal HUD, in English or Brazilian Portuguese.</p>
+
+<h2 id="reset">Reset the counter (e.g. at the start of a stream)</h2>
+<p>Double-click <b>Reset Counter.bat</b>. It prints</p>
+<pre>Counter reset:
+  CERTAIN: 0
+  APPROX: 0</pre>
+<p>and waits for a key. It works even while the counter window is open &mdash; the open window picks up the new zeros within a second.
+<b>Show Counter.bat</b> displays the current numbers without changing anything. Closing and reopening the counter does <b>not</b> reset it; your totals continue.</p>
+
+<h2 id="settings">Settings (optional)</h2>
+<p><b>Most people never need to change anything.</b> The defaults work. If you want to change labels, languages or similar, copy
+<code>config.example.toml</code> to <code>config.toml</code>, edit it with Notepad (every option is explained inside), save, and restart the counter.
+A mistake in the file only produces a warning and the default is used for that option.</p>
+<table>
+  <tr><th>Option</th><th>What it does</th></tr>
+  <tr><td><code>languages</code></td><td>Fortnite language(s). <code>["en"]</code> or <code>["pt"]</code> removes the other language&rsquo;s lookalikes.</td></tr>
+  <tr><td><code>certain_min_tier</code></td><td><code>"CERTAIN"</code> makes the CERTAIN number stricter (lower).</td></tr>
+  <tr><td><code>count_*_as_approx</code></td><td>Switch the weaker kinds of evidence on/off for APPROX.</td></tr>
+  <tr><td><code>certain_label</code>, <code>approximate_label</code></td><td>The words in front of the numbers.</td></tr>
+  <tr><td><code>use_thousands_separator</code></td><td><code>1,232</code> or <code>1232</code>.</td></tr>
+  <tr><td><code>process_fps</code></td><td>Frames analysed per second (default 15).</td></tr>
+  <tr><td><code>logging</code></td><td>Turn session logs on/off.</td></tr>
+</table>
+
+<h2 id="update">Updating to a new version</h2>
+<p>Your counter, settings and logs are stored <b>next to</b> the program files, never inside them:</p>
+<table>
+  <tr><th>Keep</th><th>What it is</th></tr>
+  <tr><td><code>state\</code></td><td>Your saved counts.</td></tr>
+  <tr><td><code>config.toml</code></td><td>Your settings (if you made one).</td></tr>
+  <tr><td><code>logs\</code></td><td>Session logs (optional to keep).</td></tr>
+  <tr><td><code>obs_output\</code></td><td>The text files OBS reads (they are re-created automatically).</td></tr>
+</table>
+<p><b>Easiest update:</b> close the counter, then extract the new zip <b>into the same folder</b> and choose &ldquo;Replace the files&rdquo;. The zip never contains your counts or <code>config.toml</code>, so they are untouched.
+Afterwards double-click <b>Show Counter.bat</b> once so the OBS text files show your real numbers again (the zip contains blank placeholders).
+If you extract to a new folder instead, copy <code>state\</code> and <code>config.toml</code> across, and re-point the two OBS text sources to the new <code>obs_output</code> folder.</p>
+
+<h2 id="help">Troubleshooting</h2>
+<table>
+  <tr><th>Problem</th><th>Fix</th></tr>
+  <tr><td>&ldquo;OBS Virtual Camera was not found&rdquo;</td><td>Open OBS Studio (version 28+) and click <b>Start Virtual Camera</b>, then start the counter again.</td></tr>
+  <tr><td>&ldquo;exists but is not sending video&rdquo;</td><td>Click <b>Start Virtual Camera</b> again; check the ChestDetectorFeed scene actually shows the game (not black).</td></tr>
+  <tr><td>Windows says &ldquo;Windows protected your PC&rdquo;</td><td>The program is not code-signed (it&rsquo;s a free hobby tool). Click <b>More info</b> &rarr; <b>Run anyway</b>. If your antivirus quarantines the .exe, add the folder as an exception.</td></tr>
+  <tr><td>The number never changes</td><td>Is the picture 16:9 and the HUD visible? Does the chest popup (&ldquo;CHEST&rdquo; / &ldquo;BA&Uacute;&rdquo;) appear in ChestDetectorFeed? Webcam/alerts covering the HUD hide it. Run <b>Diagnostics.bat</b>.</td></tr>
+  <tr><td>&ldquo;already running in another window&rdquo;</td><td>Only one counter can run at a time. Use the window that is already open.</td></tr>
+  <tr><td>It missed a chest / counted something wrong</td><td>Help improve it: in <code>config.toml</code> set <code>save_snapshots = true</code> under <code>[logging]</code>. Each pop-up the counter considered is then saved as a small picture in <code>logs\snapshots\</code> (only the pop-up area, nothing else). Send the pictures of the misses with the session log from <code>logs\</code>.</td></tr>
+  <tr><td>Text in OBS is blank or not updating</td><td>In the Text source tick <b>Read from file</b> and check it points to the <code>obs_output</code> folder of the counter you are running.</td></tr>
+  <tr><td>Wrong numbers / want to fix by hand</td><td>Run the counter folder&rsquo;s <code>Fortnite Visual Chest Counter.exe adjust --certain 1 --approx 1</code> from a command window (use negative numbers to subtract), or Reset.</td></tr>
+  <tr><td>Anything else</td><td>Double-click <b>Diagnostics.bat</b>, then copy its output (also saved to <code>logs\diagnostics.txt</code>) into your message. If the program ever crashes it saves <code>logs\crash_*.txt</code> &mdash; send that too.</td></tr>
+</table>
+
+<h2 id="limits">Known limitations (please read)</h2>
+<ul>
+  <li><b>APPROX is an estimate.</b> It can be a little high or low. CERTAIN is the conservative number; APPROX is the best guess of the total.</li>
+  <li><b>Language:</b> chest detection uses the word in the pop-up. Supported: <b>English</b> (CHEST) and <b>Brazilian Portuguese</b> (BA&Uacute;). Other languages are not supported yet.</li>
+  <li><b>HUD layout:</b> it expects the normal HUD position and size at a 16:9 picture. Heavily moved/scaled HUD, hidden HUD or a 4:3 / vertical picture will not work well.</li>
+  <li><b>Clean gameplay feed recommended:</b> overlays, webcam or alerts on top of the HUD can hide the clues.</li>
+  <li><b>Audio is not used.</b> Only the picture is analysed.</li>
+  <li>Tested on a limited number of recordings (PC English and PS5 Portuguese). Other platforms or settings may behave differently &mdash; that&rsquo;s why this is a <b>beta</b>.</li>
+</ul>
+
+<h2>Privacy and safety</h2>
+<p>The counter makes <b>no internet connection</b> and sends nothing anywhere. It only reads video frames from the OBS Virtual Camera
+(or the capture device you pick) and writes text files and logs in its own folder. It does not inject into, read memory from or modify Fortnite.</p>
+
+<h2>Credits &amp; licenses</h2>
+<p>Fortnite Visual Chest Counter is free, open-source software (MIT License, see <code>LICENSE.txt</code>). It bundles FFmpeg (LGPL v3, unmodified), Python, NumPy and SciPy under their own licenses: see <code>LICENSE-NOTICE.txt</code>, <code>runtime\licenses\</code> and <code>runtime\ffmpeg\FFMPEG-NOTICE.txt</code>.
+Not affiliated with or endorsed by Epic Games. Source code and more help: this project&rsquo;s GitHub page. Fortnite is a trademark of Epic Games, Inc.</p>
+
+</main>
+</body>
+</html>
