@@ -45,6 +45,7 @@ ZIP_TIME = (2026, 1, 1, 0, 0, 0)                                # fixed timestam
 LAUNCHERS = {                                                   # file -> (window title, command, extra)
     "Start Chest Counter.bat": ("Fortnite Visual Chest Counter", "live"),
     "Set Starting Count.bat": ("Set Starting Count", "set-count"),
+    "Configure Counter.bat": ("Configure Chest Counter", "configure"),
     "Reset Counter.bat": ("Reset Chest Counter", "reset"),
     "Show Counter.bat": ("Show Chest Counter", "show"),
     "Diagnostics.bat": ("Chest Counter Diagnostics", "diagnostics"),

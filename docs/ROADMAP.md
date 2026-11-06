@@ -4,7 +4,7 @@
 
 Detector frozen at the `rc1` baselines (`tests/baselines/*_rc1.json`).
 
-## v0.1.1 - usability (ready, not yet published)
+## v0.1.1 - usability (released; download refreshed 2026-11-06)
 
 No detection changes. Notes: [RELEASE_NOTES_v0.1.1.md](RELEASE_NOTES_v0.1.1.md).
 
@@ -13,6 +13,8 @@ No detection changes. Notes: [RELEASE_NOTES_v0.1.1.md](RELEASE_NOTES_v0.1.1.md).
 - Colour-coded console with `minimal` / `normal` / `debug` verbosity.
 - In-zip guide updated with the other video inputs.
 - `Set Starting Count.bat` (`set-count`): start from the chests already opened (APPROX = total, CERTAIN = 0).
+- `Configure Counter.bat` (`configure`): menu for what viewers see + wording (`#` = number), applied live; `show` also
+  drives `chest_status.txt`; startup states what viewers see and which file OBS should read.
 - Reset / Set Starting Count can no longer be overwritten by a chest counted in the same second.
 - Release runs on the official python.org embeddable Python (signed), no self-built executable; reproducible zip,
   `runtime/PROVENANCE.txt`.

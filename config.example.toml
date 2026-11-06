@@ -27,23 +27,23 @@ count_interaction_object_as_approx = true   # button + chest-looking object, eve
 medium_counts_alone_languages = ["en"]      # languages whose medium-confidence popup counts by itself
 
 [display]
-# What your viewers see. The counter only writes TEXT FILES (in the obs_output folder); OBS shows them with a
-# "Text (GDI+)" source that has "Read from file" ticked. Fonts, colours and size are set in OBS, not here.
+# What your viewers see. EASIEST: double-click "Configure Counter.bat" - it asks two questions and writes these lines for you.
+# The counter only writes TEXT FILES (in the obs_output folder); OBS shows them with a "Text (GDI+)" source that has
+# "Read from file" ticked. Fonts, colours and size are set in OBS, not here.
 #
 # The two numbers:
 #   CERTAIN = chests detected with strong evidence
 #   APPROX  = the estimated TOTAL, which already INCLUDES the certain ones (never add them together)
 #
-# Files the counter writes (their names never change):
-#   chest_counter.txt       <- easiest: ONE source that shows what "show" below says
+# Use ONE file in OBS: obs_output\chest_counter.txt  (it shows what "show" below says).
+# The counter cannot hide a Text source you added in OBS: if a number you did not choose appears, that source reads
+# another file - point it at chest_counter.txt. Other files, for advanced layouts (names never change):
+#   chest_status.txt        same as chest_counter.txt, or one line with both numbers when show = "both"
 #   certain_chests.txt      always the certain_text
 #   approximate_chests.txt  always the approx_text
-#   chest_status.txt        always the combined_status_format (one line)
 #   last_chest.txt          the most recent chest
-# The counter cannot hide a Text source you added in OBS: to stop showing a number, delete or hide that source in OBS,
-# or use chest_counter.txt and change "show".
 
-# What chest_counter.txt shows:
+# What chest_counter.txt (and chest_status.txt) show:
 #   "both"    -> certain_text on the first line, approx_text on the second
 #   "certain" -> only certain_text
 #   "approx"  -> only approx_text  (the estimated total)

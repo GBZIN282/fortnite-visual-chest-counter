@@ -159,14 +159,32 @@ def overlay_text(display, state):
     return display_text(display, "certain", state) + "\n" + display_text(display, "approx", state)
 
 
+SHOW_DESCRIPTIONS = {"both": "both numbers", "certain": "confirmed chests only (CERTAIN)",
+                     "approx": "estimated total only (APPROX)"}
+
+
+def status_line_text(display, state):
+    """obs_output/chest_status.txt: the one-line all-in-one file. It follows `show` too, so whichever all-in-one file
+    OBS reads, choosing "approx" shows only APPROX (v0.1.0 recommended this file for a single source)."""
+    if display.get("show", "both") != "both":
+        return overlay_text(display, state)
+    return settings.render_text(display["combined_status_format"], settings.DEFAULTS["display"]["combined_status_format"],
+                                certain=state["certain"], approx=state["approximate"], thousands=display["use_thousands_separator"])
+
+
+def overlay_summary(display, state, obs_dir):
+    """Two lines telling the user exactly what viewers see and which file OBS must read."""
+    show = display.get("show", "both")
+    return (f"Viewers see ({SHOW_DESCRIPTIONS.get(show, show)}): {overlay_text(display, state).replace(chr(10), '  /  ')}",
+            f"OBS Text source file: {(Path(obs_dir) / 'chest_counter.txt').resolve()}")
+
+
 def write_obs_files(state, obs_dir, display):
     """The OBS text files. File names never change (OBS sources point at them); only their text is customisable."""
     obs_dir = Path(obs_dir)
     atomic_write(obs_dir / "certain_chests.txt", display_text(display, "certain", state) + "\n")
     atomic_write(obs_dir / "approximate_chests.txt", display_text(display, "approx", state) + "\n")
-    atomic_write(obs_dir / "chest_status.txt", settings.render_text(
-        display["combined_status_format"], settings.DEFAULTS["display"]["combined_status_format"],
-        certain=state["certain"], approx=state["approximate"], thousands=display["use_thousands_separator"]) + "\n")
+    atomic_write(obs_dir / "chest_status.txt", status_line_text(display, state) + "\n")
     atomic_write(obs_dir / "chest_counter.txt", overlay_text(display, state) + "\n")
     atomic_write(obs_dir / "last_chest.txt", last_chest_text(state) + "\n")
 
@@ -322,11 +340,50 @@ class CounterSession:
 # CONFIG PLUMBING
 # ==================================================================
 
-def make_config(args):
-    overrides = {("detector", "process_fps"): getattr(args, "process_fps", None),
+def config_overrides(args):
+    return {("detector", "process_fps"): getattr(args, "process_fps", None),
                  ("state", "path"): getattr(args, "state", None), ("state", "obs_dir"): getattr(args, "obs_dir", None),
                  ("logging", "dir"): getattr(args, "log_dir", None), ("live", "source"): getattr(args, "source", None),
                  ("live", "device"): getattr(args, "device", None), ("live", "monitor"): getattr(args, "monitor", None)}
+
+
+def config_path(args):
+    return Path(getattr(args, "config", None) or settings.DEFAULT_CONFIG_PATH)
+
+
+class DisplayConfigWatcher:
+    """Configure Counter.bat (or Notepad) edits config.toml while the counter runs: re-read [display] and [console]
+    within a second and rewrite the OBS files, so the overlay changes without a restart. Detector settings still need a
+    restart (they are not touched here)."""
+
+    def __init__(self, args):
+        self.args, self.path = args, config_path(args)
+        self.mtime = self._mtime()
+
+    def _mtime(self):
+        try:
+            return self.path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def check(self, session):
+        """-> True if the overlay settings were reloaded."""
+        mtime = self._mtime()
+        if mtime == self.mtime:
+            return False
+        self.mtime = mtime
+        cfg, _, warnings = settings.load_config(getattr(self.args, "config", None), config_overrides(self.args))
+        for w in warnings:
+            CONSOLE.warn(w)
+        session.display = cfg["display"]
+        CONSOLE.configure(cfg["console"]["verbosity"], cfg["console"]["colors"])
+        session.write_obs()
+        CONSOLE.info("Overlay settings changed - " + overlay_summary(session.display, session.state, session.obs_dir)[0])
+        return True
+
+
+def make_config(args):
+    overrides = config_overrides(args)
     cfg, origin, warnings = settings.load_config(getattr(args, "config", None), overrides)
     CONSOLE.configure(cfg["console"]["verbosity"], cfg["console"]["colors"])
     for w in warnings:
@@ -777,7 +834,10 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     print("Counter: " + (f"continuing from {session.fmt(state['certain'])} certain / {session.fmt(state['approximate'])} approx"
                          if session.loaded_existing else "starting at 0 / 0")
           + ("" if session.persist else " (saving is turned off in config.toml)"))
-    print(f"OBS text files: {session.obs_dir.resolve()}")
+    viewers, obs_file = overlay_summary(session.display, state, session.obs_dir)
+    CONSOLE.line(viewers, "bold")
+    CONSOLE.line(f"{obs_file}   (change what viewers see: Configure Counter.bat)")
+    CONSOLE.line("This window always shows both numbers for you; viewers only see the file above.", "dim")
     print("Counting has started. Counts are kept when you stop and restart.")
     print("To stop: press Q in this window (or Ctrl+C, or just close the window). Nothing is lost.")
     CONSOLE.line(f"Window: {CONSOLE.verbosity} detail, colours {'on' if CONSOLE.colors else 'off'} ([console] in config.toml)\n", "dim")
@@ -793,6 +853,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     n_frames, total_s, max_s = 0, 0.0, 0.0
     last_status, cpu0, wall0 = time.monotonic(), time.process_time(), time.monotonic()
     last_sync = last_status_log = time.monotonic()
+    watcher = DisplayConfigWatcher(args)
     processed_at_status = processed_at_log = 0
     stop_reason = "stream ended"
     if guard is not None:
@@ -818,6 +879,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                 if session.sync_external_changes():
                     CONSOLE.info(f"Counter changed by Reset / Set Starting Count -> CERTAIN {session.fmt(state['certain'])} | "
                                  f"APPROX {session.fmt(state['approximate'])}")
+                watcher.check(session)
             if now_m - last_status >= interval:
                 span = now_m - last_status
                 det_fps = (source.frames_processed - processed_at_status) / span
@@ -910,6 +972,8 @@ def cmd_show(args):
     print("\nCurrent counter:")
     show_counts(session)
     print("\n  (CERTAIN is part of APPROX: APPROX is the estimated total.)")
+    for line in overlay_summary(session.display, session.state, session.obs_dir):
+        CONSOLE.line(f"  {line}")
     if args.json:
         print(json.dumps(session.state, indent=2, ensure_ascii=False))
 
@@ -949,6 +1013,140 @@ def cmd_adjust(args):
                        "counts_after": {"certain": st["certain"], "approximate": st["approximate"]}, "logged_at": now_iso()})
     print("Counter adjusted:")
     show_counts(session)
+
+
+# ---- Configure Counter.bat: choose what viewers see without editing files -----------------------------
+
+def toml_string(text):
+    """A TOML basic string for any text (quotes, backslashes, new lines, emoji)."""
+    escaped = (str(text).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+               .replace("\t", "\\t"))
+    return f'"{escaped}"'
+
+
+def update_config_file(path, section, values):
+    """Set `key = value` lines in one [section] of config.toml, keeping every other line and comment. Creates the
+    file from config.example.toml (or empty) if it does not exist. The result is checked by loading it; if that would
+    produce a warning for a value we wrote, the original file is restored and UserError is raised."""
+    import re
+    path = Path(path)
+    original = path.read_bytes() if path.exists() else None
+    if original is not None:
+        lines = original.decode("utf-8-sig").splitlines()
+    else:
+        example = path.with_name("config.example.toml")
+        lines = example.read_text(encoding="utf-8-sig").splitlines() if example.exists() else []
+    header = re.compile(r"^\s*\[([^\]]+)\]\s*(#.*)?$")
+    start = next((i for i, l in enumerate(lines) if (m := header.match(l)) and m.group(1).strip() == section), None)
+    if start is None:
+        lines += ["", f"[{section}]"]
+        start = len(lines) - 1
+    end = next((i for i in range(start + 1, len(lines)) if header.match(lines[i])), len(lines))
+    for key, value in values.items():
+        text = toml_string(value) if isinstance(value, str) else ("true" if value is True else "false" if value is False else str(value))
+        found = next((i for i in range(start + 1, end) if re.match(rf"^\s*{re.escape(key)}\s*=", lines[i])), None)
+        if found is not None:
+            lines[found] = f"{key} = {text}"
+        else:
+            insert = end
+            while insert > start + 1 and not lines[insert - 1].strip():
+                insert -= 1                              # keep the blank line before the next section
+            lines.insert(insert, f"{key} = {text}")
+            end += 1
+    atomic_write(path, "\n".join(lines) + "\n")
+    cfg, _, warnings = settings.load_config(path)
+    bad = [w for w in warnings if any(f"] {k} =" in w for k in values)]
+    if bad or any(cfg[section][k] != v for k, v in values.items()):
+        if original is None:
+            path.unlink(missing_ok=True)
+        else:
+            atomic_write(path, original.decode("utf-8-sig"))
+        raise UserError("That text could not be saved (" + ("; ".join(bad) or "it did not read back the same") + "). Nothing was changed.")
+    return path
+
+
+def text_from_hash(text):
+    """'Chests opened: #' -> 'Chests opened: {count}'. Braces are kept literal; no # -> the number goes at the end."""
+    literal = str(text).replace("{", "{{").replace("}", "}}")
+    if "#" not in literal:
+        literal = literal.rstrip() + " #"
+    return literal.replace("#", "{count}")
+
+
+def hash_from_text(template):
+    """The reverse, to show a user their current text: 'Chests: {count}' -> 'Chests: #'."""
+    return str(template).replace("{count}", "#").replace("{{", "{").replace("}}", "}")
+
+
+CONFIGURE_CHOICES = {"1": "approx", "2": "certain", "3": "both"}
+
+
+def _ask(question, valid=None):
+    """input() that returns '' on Enter/EOF and re-asks until the answer is in `valid` (if given)."""
+    while True:
+        try:
+            answer = input(question).strip()
+        except (EOFError, KeyboardInterrupt):
+            return ""
+        if not answer or valid is None or answer in valid:
+            return answer
+        CONSOLE.warn(f"'{answer}' is not one of {', '.join(sorted(valid))}. Try again.")
+
+
+def cmd_configure(args):
+    """Choose what viewers see (all-in-one OBS file) and its wording, then save config.toml. Asks if no options given."""
+    banner()
+    cfg, _ = make_config(args)
+    preflight(cfg, needs_video=False)
+    session = CounterSession(cfg)
+    display = cfg["display"]
+    path = config_path(args)
+    show, texts = display["show"], {}
+    defaults = settings.DEFAULTS["display"]
+
+    if args.show or args.approx_text is not None or args.certain_text is not None:
+        show = args.show or show
+        if args.approx_text is not None:
+            texts["approx_text"] = text_from_hash(args.approx_text)
+        if args.certain_text is not None:
+            texts["certain_text"] = text_from_hash(args.certain_text)
+    else:
+        sample = dict(session.state)
+        CONSOLE.line("\nWhat should your viewers see?", "bold")
+        CONSOLE.line(f"  1) Estimated total only    e.g. {display_text(display, 'approx', sample)}")
+        CONSOLE.line(f"  2) Confirmed chests only   e.g. {display_text(display, 'certain', sample)}")
+        CONSOLE.line("  3) Both numbers (two lines)")
+        current = {v: k for k, v in CONFIGURE_CHOICES.items()}[show]
+        answer = _ask(f"Type 1, 2 or 3 and press Enter (just Enter = keep {current}, {SHOW_DESCRIPTIONS[show]}): ",
+                      set(CONFIGURE_CHOICES))
+        show = CONFIGURE_CHOICES.get(answer, show)
+        wanted = {"approx": ["approx"], "certain": ["certain"], "both": ["certain", "approx"]}[show]
+        CONSOLE.line("\nNow the wording. Put # where the number goes.  Examples:  Chests opened: #   |   Chest Hunt: #/500   |   # chests")
+        CONSOLE.line('Type "default" for the original text, or just press Enter to keep the current one.')
+        for which in wanted:
+            key = f"{which}_text"
+            label = "estimated total" if which == "approx" else "confirmed chests"
+            typed = _ask(f"Text for the {label} (now: {hash_from_text(display[key])}): ")
+            if typed.lower() == "default":
+                texts[key] = defaults[key]
+            elif typed:
+                texts[key] = text_from_hash(typed)
+
+    changes = {"show": show, **texts}
+    if any(display.get(k) != v for k, v in changes.items()):
+        update_config_file(path, "display", changes)
+        cfg, _ = make_config(args)
+        session.display = cfg["display"]
+        CONSOLE.line(f"\nSaved in {path.resolve()}.", "green")
+    else:
+        CONSOLE.line("\nNothing changed.")
+    session.write_obs()
+    viewers, obs_file = overlay_summary(session.display, session.state, session.obs_dir)
+    CONSOLE.line(viewers, "bold")
+    CONSOLE.line(obs_file)
+    CONSOLE.line("In OBS, your Text (GDI+) source must have \"Read from file\" ticked and point to that file.")
+    if counter_is_running(cfg["state"]["path"]):
+        CONSOLE.info("The counter window is open: it applies this within a second.")
 
 
 MAX_STARTING_COUNT = 1_000_000
@@ -1179,6 +1377,11 @@ def build_parser():
     p.add_argument("--json", action="store_true", help="also print the raw saved state")
     p.set_defaults(func=cmd_show)
     sub.add_parser("reset", parents=[common], help="set both counts to 0").set_defaults(func=cmd_reset)
+    p = sub.add_parser("configure", parents=[common], help="choose what viewers see in OBS and its wording (asks if no options)")
+    p.add_argument("--show", choices=list(settings.SHOW_MODES), help="what chest_counter.txt shows")
+    p.add_argument("--approx-text", help='text for the estimated total, # = the number (e.g. "Chests opened: #")')
+    p.add_argument("--certain-text", help="text for the confirmed chests, # = the number")
+    p.set_defaults(func=cmd_configure)
     p = sub.add_parser("set-count", parents=[common],
                        help="start from the chests you already opened (sets APPROX; CERTAIN starts at 0)")
     p.add_argument("count", nargs="?", help="chests already opened (asked for if left out)")

@@ -776,6 +776,117 @@ def test_parse_count_accepts_only_plain_whole_numbers():
         assert chest_counter.parse_count(text)[0] is None, text
 
 
+# ------------------------------------------------------------------ 8. Configure Counter.bat / one obvious overlay (v0.1.1)
+
+def _cfg_args(tmp):
+    return ["--config", str(Path(tmp) / "config.toml")] + args_for(tmp)
+
+
+def _obs(tmp, name):
+    return (Path(tmp) / "obs_output" / name).read_text(encoding="utf-8")
+
+
+def test_show_controls_both_all_in_one_files():
+    with tempfile.TemporaryDirectory() as tmp:
+        files = _obs_files(tmp, {"show": "approx", "approx_text": "Chests: {count}"}, 20, 231)
+        assert files["chest_counter.txt"] == "Chests: 231\n" and files["chest_status.txt"] == "Chests: 231\n"
+        files = _obs_files(tmp, {"show": "certain"}, 20, 231)
+        assert files["chest_counter.txt"] == files["chest_status.txt"] == "CERTAIN OPENED CHESTS: 20\n"
+        files = _obs_files(tmp, {"show": "both"}, 20, 231)                          # unchanged v0.1.0 behaviour
+        assert files["chest_status.txt"] == "20 certain • ~231 estimated\n"
+        assert files["certain_chests.txt"] == "CERTAIN OPENED CHESTS: 20\n" and files["approximate_chests.txt"] == "APPROX. OPENED CHESTS: 231\n"
+
+
+def test_hash_wording_converts_both_ways():
+    t = chest_counter.text_from_hash
+    assert t("Chests opened: #") == "Chests opened: {count}"
+    assert t("Chest Hunt: #/500") == "Chest Hunt: {count}/500"
+    assert t("Chests opened:") == "Chests opened: {count}"                         # no # -> number at the end
+    assert t("{weird} #") == "{{weird}} {count}"
+    assert chest_counter.hash_from_text("Chest Hunt: {count}/500 {{x}}") == "Chest Hunt: #/500 {x}"
+
+
+def test_config_writer_keeps_comments_and_other_settings():
+    with tempfile.TemporaryDirectory() as tmp:
+        example = Path(__file__).resolve().parent.parent / "config.example.toml"
+        shutil_copy = Path(tmp) / "config.example.toml"
+        shutil_copy.write_bytes(example.read_bytes())
+        path = Path(tmp) / "config.toml"
+        chest_counter.update_config_file(path, "display", {"show": "approx", "approx_text": 'He said "hi" \\ {count} 🏆'})
+        text = path.read_text(encoding="utf-8")
+        assert "OPTIONAL settings" in text and "[console]" in text and "verbosity = " in text   # created from the example
+        cfg, _, warnings = settings.load_config(path)
+        assert warnings == [] and cfg["display"]["show"] == "approx" and cfg["display"]["approx_text"] == 'He said "hi" \\ {count} 🏆'
+        # a user's own file: other settings and comments survive, BOM accepted, missing section/key added
+        path.write_bytes(b"\xef\xbb\xbf# my notes\n[detector]\nlanguages = [\"en\"]\n\n[live]\nsource = \"desktop\"\nmonitor = 2\n")
+        chest_counter.update_config_file(path, "display", {"show": "certain", "certain_text": "Confirmed: {count}"})
+        cfg, _, warnings = settings.load_config(path)
+        assert warnings == [] and cfg["detector"]["languages"] == ["en"] and cfg["live"]["source"] == "desktop"
+        assert cfg["display"]["show"] == "certain" and "# my notes" in path.read_text(encoding="utf-8")
+
+
+def test_config_writer_restores_the_file_if_a_value_is_rejected():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "config.toml"
+        path.write_text('[display]\nshow = "approx"\n', encoding="utf-8")
+        before = path.read_bytes()
+        try:
+            chest_counter.update_config_file(path, "display", {"show": "everything"})
+            raise AssertionError("an invalid value was saved")
+        except chest_counter.UserError as error:
+            assert "Nothing was changed" in str(error)
+        assert path.read_bytes() == before
+
+
+def test_configure_menu_sets_what_viewers_see():
+    with tempfile.TemporaryDirectory() as tmp:
+        run_main(["set-count", "150"] + args_for(tmp))
+        code, text = _run_with_answers(["configure"] + _cfg_args(tmp), ["7", "1", "Chests opened: #"])
+        assert code == 0 and "is not one of" in text and "Saved in" in text
+        assert "Viewers see (estimated total only (APPROX)): Chests opened: 150" in text
+        assert "chest_counter.txt" in text and "Read from file" in text
+        assert _obs(tmp, "chest_counter.txt") == _obs(tmp, "chest_status.txt") == "Chests opened: 150\n"
+        cfg, _, warnings = settings.load_config(Path(tmp) / "config.toml")
+        assert warnings == [] and cfg["display"]["show"] == "approx" and cfg["display"]["approx_text"] == "Chests opened: {count}"
+
+
+def test_configure_enter_keeps_everything_and_default_restores_text():
+    with tempfile.TemporaryDirectory() as tmp:
+        run_main(["configure", "--show", "approx", "--approx-text", "Hunt: #/500"] + _cfg_args(tmp))
+        code, text = _run_with_answers(["configure"] + _cfg_args(tmp), ["", ""])
+        assert code == 0 and "Nothing changed" in text and _obs(tmp, "chest_counter.txt") == "Hunt: 0/500\n"
+        code, text = _run_with_answers(["configure"] + _cfg_args(tmp), ["3", "default", "default"])
+        assert code == 0 and _obs(tmp, "chest_counter.txt") == "CERTAIN OPENED CHESTS: 0\nAPPROX. OPENED CHESTS: 0\n"
+
+
+def test_configure_command_line_for_ai_assistants():
+    with tempfile.TemporaryDirectory() as tmp:
+        code, text = run_main(["configure", "--show", "certain", "--certain-text", "Confirmed: #"] + _cfg_args(tmp))
+        assert code == 0 and _obs(tmp, "chest_counter.txt") == "Confirmed: 0\n"
+
+
+def test_running_counter_picks_up_overlay_changes():
+    with tempfile.TemporaryDirectory() as tmp:
+        args = SimpleNamespace(config=str(Path(tmp) / "config.toml"), process_fps=None, state=None, obs_dir=None,
+                               log_dir=None, source=None, device=None, monitor=None)
+        cfg = tmp_config(tmp)
+        live = chest_counter.CounterSession(cfg)
+        live.state.update(certain=2, approximate=9)
+        watcher = chest_counter.DisplayConfigWatcher(args)
+        assert watcher.check(live) is False                                         # nothing changed yet
+        Path(args.config).write_text('[display]\nshow = "approx"\napprox_text = "Live: {count}"\n', encoding="utf-8")
+        live.obs_dir = Path(tmp) / "obs_output"
+        assert watcher.check(live) is True and live.display["show"] == "approx"
+        assert _obs(tmp, "chest_counter.txt") == "Live: 9\n"
+        assert watcher.check(live) is False
+
+
+def test_show_command_says_what_viewers_see_and_which_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        code, text = run_main(["show"] + args_for(tmp))
+        assert code == 0 and "Viewers see (both numbers)" in text and "chest_counter.txt" in text
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -95,7 +95,7 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
   <li>Unzip the folder anywhere you can write files (Desktop or Documents is fine).</li>
   <li>In OBS: make a scene called <b>ChestDetectorFeed</b> with only your game in it, and start the <b>Virtual Camera</b> from that scene.</li>
   <li>Double-click <b>Start Chest Counter.bat</b> and play.</li>
-  <li>In OBS, add a <b>Text</b> source that reads <code>obs_output\chest_counter.txt</code> (both numbers; one number or your own words: see <a href="#custom">Customize</a>).</li>
+  <li>In OBS, add a <b>Text</b> source that reads <code>obs_output\chest_counter.txt</code>. Double-click <b>Configure Counter.bat</b> to choose what it shows.</li>
 </ol>
 <p>Details for each step are below.</p>
 
@@ -106,6 +106,7 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
 The folder contains:</p>
 <pre>Start Chest Counter.bat        &lt;- the one you double-click
 Set Starting Count.bat         enter the chests you have already opened
+Configure Counter.bat          choose what viewers see in OBS and its wording
 Reset Counter.bat              set both counts to 0
 Show Counter.bat               look at the current counts
 Count Video File.bat           drag a recorded video onto this file to count it
@@ -175,41 +176,40 @@ To try: make a copy of <code>config.example.toml</code> named <code>config.toml<
       <td>Copy the name from <code>logs\diagnostics.txt</code> after running <code>Diagnostics.bat</code>. Many cards work with only <b>one</b> program at a time, so close OBS or remove the card from it. Uses the card&rsquo;s default resolution. Not yet tested with physical cards.</td></tr>
 </table>
 
-<h2 id="overlay">Show it on stream (OBS text sources)</h2>
-<p>The counter only writes the <i>text</i>. You style it in OBS however you like.</p>
+<h2 id="overlay">Show it on stream (OBS text source)</h2>
+<p>The counter only writes the <i>text</i>. You style it in OBS however you like. You need <b>one</b> source:</p>
 <ol>
   <li>Open the scene your <b>viewers see</b> (not ChestDetectorFeed).</li>
   <li>In <b>Sources</b> click <b>+</b> &rarr; <b>Text (GDI+)</b> &rarr; name it &ldquo;Chests&rdquo; &rarr; OK.</li>
   <li>Tick <b>Read from file</b>, click <b>Browse</b> and choose <code>obs_output\chest_counter.txt</code> (inside the counter folder).</li>
   <li>Choose a font, size and colour. Click OK and place it on screen.</li>
 </ol>
-<p>That one source shows both numbers on two lines. To show only one number or your own words, see <a href="#custom">Customize what viewers see</a>. You can also use one source per number:</p>
-<table>
-  <tr><th>File (in <code>obs_output</code>)</th><th>Shows (default text)</th></tr>
-  <tr><td><code>chest_counter.txt</code></td><td><b>Easiest:</b> both numbers, or only one (the <code>show</code> setting).</td></tr>
-  <tr><td><code>certain_chests.txt</code></td><td><code>CERTAIN OPENED CHESTS: 12</code></td></tr>
-  <tr><td><code>approximate_chests.txt</code></td><td><code>APPROX. OPENED CHESTS: 47</code></td></tr>
-  <tr><td><code>chest_status.txt</code></td><td>One compact line: <code>12 certain &bull; ~47 estimated</code></td></tr>
-  <tr><td><code>last_chest.txt</code></td><td>The most recent chest, e.g. <code>CHEST +1 &bull; HIGH</code>.</td></tr>
-</table>
-<p>Numbers over 999 get a thousands separator (<code>1,232</code>). Only the counter writes these files; don&rsquo;t edit them by hand.
-Their names never change, so your OBS sources keep working after updates.</p>
-<div class="note">Put these text sources only in the scene your <b>viewers</b> see, never in ChestDetectorFeed.</div>
+<p>To choose what it shows and what it says, double-click <b>Configure Counter.bat</b> (next section). When the counter starts, its window tells you what viewers see and which file OBS should read.</p>
+<div class="note">Put the text source only in the scene your <b>viewers</b> see, never in ChestDetectorFeed.</div>
 
 <h2 id="custom">Customize what viewers see</h2>
-<p>Optional. In <code>config.toml</code> under <code>[display]</code>, then save and restart the counter.
-<code>{count}</code> is where the number goes; <code>{certain}</code> and <code>{approx}</code> also work anywhere. Any text, symbols and emoji are allowed (emoji need a font in OBS that has them).</p>
+<p>Double-click <b>Configure Counter.bat</b> and answer two questions:</p>
+<pre>What should your viewers see?
+  1) Estimated total only    e.g. APPROX. OPENED CHESTS: 231
+  2) Confirmed chests only   e.g. CERTAIN OPENED CHESTS: 20
+  3) Both numbers (two lines)
+Type 1, 2 or 3 and press Enter: 1
+
+Now the wording. Put # where the number goes.  Examples:  Chests opened: #  |  Chest Hunt: #/500  |  # chests
+Text for the estimated total (now: APPROX. OPENED CHESTS: #): Chests opened: #
+
+Viewers see (estimated total only (APPROX)): Chests opened: 231</pre>
+<p>OBS updates at once, even while the counter is running. Run it again any time: Enter keeps an answer, <code>default</code> brings back the original wording. Any text, symbols and emoji work (emoji need an OBS font that has them).</p>
+<div class="note"><b>The counter cannot hide a Text source you already added in OBS.</b> If you see a number you did not choose, that source reads a different file: point it at <code>obs_output\chest_counter.txt</code> or hide it. The counter&rsquo;s own window always shows both numbers &mdash; that is for you, not for viewers.</div>
+<p><b>Advanced:</b> the same settings live in <code>config.toml</code> under <code>[display]</code> (<code>show</code>, <code>certain_text</code>, <code>approx_text</code>, with <code>{count}</code> for the number). For separately styled sources, the counter also writes:</p>
 <table>
-  <tr><th>I want&hellip;</th><th>Put this under <code>[display]</code></th></tr>
-  <tr><td>Only the estimated total</td><td><code>show = "approx"</code></td></tr>
-  <tr><td>Only the confirmed chests</td><td><code>show = "certain"</code></td></tr>
-  <tr><td>My own words</td><td><code>approx_text = "Chests opened: {count}"</code></td></tr>
-  <tr><td>A goal</td><td><code>approx_text = "Chest Hunt: {count}/500"</code></td></tr>
-  <tr><td>Word and number on separate lines</td><td><code>approx_text = "CHESTS\n{count}"</code></td></tr>
-  <tr><td>The original text back</td><td>delete the lines you changed (or the whole <code>config.toml</code>)</td></tr>
+  <tr><th>File (in <code>obs_output</code>)</th><th>Contains</th></tr>
+  <tr><td><code>chest_counter.txt</code></td><td><b>Recommended:</b> what you chose in Configure Counter.bat.</td></tr>
+  <tr><td><code>chest_status.txt</code></td><td>One line <code>20 certain &bull; ~231 estimated</code> when showing both; otherwise the same as chest_counter.txt.</td></tr>
+  <tr><td><code>certain_chests.txt</code></td><td>Always the confirmed number.</td></tr>
+  <tr><td><code>approximate_chests.txt</code></td><td>Always the estimated total.</td></tr>
+  <tr><td><code>last_chest.txt</code></td><td>The most recent chest, e.g. <code>CHEST +1 &bull; HIGH</code>.</td></tr>
 </table>
-<div class="note"><b>The counter cannot hide a Text source you already added in OBS.</b> To stop showing a number, hide or delete that source in OBS, or use <code>chest_counter.txt</code> and change <code>show</code>.
-A typo never breaks the counter: it prints a WARNING and uses the default text. Tip: paste your <code>config.toml</code> into an AI assistant and ask it to make the change for you.</div>
 
 <h2 id="window">The counter window (colours and detail)</h2>
 <p><b style="color:#0f7a4a">Green</b> = certain chest &middot; <b style="color:#9a5b00">yellow</b> = counted in APPROX only &middot; <b style="color:#c0392b">red</b> = looked at but not counted &middot; white on red = an error &middot; cyan = status.

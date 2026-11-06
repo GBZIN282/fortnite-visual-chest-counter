@@ -81,6 +81,10 @@ v0.1.0 was built with PyInstaller (see git history). Since v0.1.1 the release sh
 an unsigned, self-built launcher executable. Release checklist: scan the final zip and folder with
 `MpCmdRun -Scan -ScanType 3 -File <path> -DisableRemediation`, then run the packaged app from a fresh extraction.
 
+Release history note: the v0.1.1 zip was refreshed on 2026-11-06 (Configure Counter.bat and clearer overlay setup); the
+first v0.1.1 zip (SHA-256 `f7fb4129…`, source `9f90de7`) is kept privately in `build_out/v0.1.1-original/`, and the
+`v0.1.1` tag was moved to the source of the refreshed zip.
+
 The build runs a **release audit** that fails on samples, analysis output, logs, a saved counter, non-zero OBS files or any
 executable other than the official `python.exe`/`pythonw.exe` and `ffmpeg.exe`. Bump the version only in `version.py`.
 `packaging/README.html` (shipped in the zip) and the top-level `README.md` (GitHub) are separate files; keep them consistent.

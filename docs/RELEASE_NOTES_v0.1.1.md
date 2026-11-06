@@ -16,15 +16,15 @@ chests. Works while the counter is running. Wrong entries are refused without ch
 
 ### New: customize what viewers see
 
-- **One easy file for OBS:** `obs_output\chest_counter.txt` shows both numbers, or only one.
-- **Show only what you want:** `show = "both"`, `"certain"` or `"approx"` (the estimated total).
-- **Your own wording:** `approx_text = "Chest Hunt: {count}/500"`, `certain_text = "Confirmed: {count}"`. Any text, symbols
-  and emoji; `\n` for a second line.
-- A typo never breaks the counter: you get a `WARNING` and the default text.
-- Your existing OBS sources keep working: the file names did not change, and v0.1.0 settings still apply.
+- **One OBS source, one file:** add a Text (GDI+) source reading `obs_output\chest_counter.txt`.
+- **`Configure Counter.bat`:** choose *Estimated total only*, *Confirmed chests only* or *Both*, then type your own words
+  with `#` where the number goes (e.g. `Chest Hunt: #/500`). OBS updates instantly, even while the counter is running.
+- When the counter starts, it shows exactly what viewers see and which file OBS should read.
+- Any text, symbols and emoji. A typo never breaks the counter.
+- Your existing OBS sources keep working: file names did not change, and v0.1.0 settings still apply. Advanced users can
+  still use one file per number or edit `config.toml` directly.
 
-Examples: [Customize what viewers see](https://github.com/GabrielGzS/fortnite-visual-chest-counter#customize-what-viewers-see).
-Tip: paste your `config.toml` into an AI assistant and ask it to make the change for you.
+Details: [Customize what viewers see](https://github.com/GabrielGzS/fortnite-visual-chest-counter#customize-what-viewers-see).
 
 ### New: a readable counter window
 
@@ -73,3 +73,7 @@ capture-card mode is untested on physical cards.
 
 MIT licensed. Includes the official Python runtime (PSF License), NumPy, SciPy and FFmpeg (LGPL v3) under their own licenses;
 `runtime\PROVENANCE.txt` lists where each component comes from.
+
+*This v0.1.1 download was refreshed on 2026-11-06 to add `Configure Counter.bat` and the clearer overlay setup; it
+replaces the first v0.1.1 zip (SHA-256 `f7fb4129…`) published the same day. If you downloaded v0.1.1 before, extract the
+new zip over it: your counts and settings are kept.*
