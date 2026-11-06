@@ -40,7 +40,7 @@ The two alternatives are switched on in a small settings file. Step-by-step inst
 5. Add OBS Text (GDI+) sources that read `obs_output\certain_chests.txt` and `obs_output\approximate_chests.txt`.
 
 Full single-PC and dual-PC guides: [README](https://github.com/GabrielGzS/fortnite-visual-chest-counter#readme) (also
-included in the zip as `README.html`). Windows may warn that the program is not code-signed: **More info → Run anyway**.
+included in the zip as `README.html`).
 
 ### What's in v0.1.0
 

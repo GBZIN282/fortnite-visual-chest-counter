@@ -77,6 +77,7 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
   <li><a href="#settings">Settings</a></li>
   <li><a href="#update">Updating</a></li>
   <li><a href="#help">Troubleshooting</a></li>
+  <li><a href="#compat">Fortnite compatibility</a></li>
   <li><a href="#limits">Limitations</a></li>
 </ul></nav>
 
@@ -285,6 +286,11 @@ If you extract to a new folder instead, copy <code>state\</code> and <code>confi
   <tr><td>Wrong numbers / want to fix by hand</td><td>Use <b>Set Starting Count.bat</b> to enter the right total, or <b>Reset Counter.bat</b> for 0.</td></tr>
   <tr><td>Anything else</td><td>Double-click <b>Diagnostics.bat</b>, then copy its output (also saved to <code>logs\diagnostics.txt</code>) into your message. If the program ever crashes it saves <code>logs\crash_*.txt</code> &mdash; send that too.</td></tr>
 </table>
+
+<h2 id="compat">Fortnite compatibility</h2>
+<p>This version (v0.1.1) was developed and live-tested during <b>Fortnite Chapter 7 Season 5</b> (November 2026); its automated tests also use recordings of earlier gameplay.
+It recognises Fortnite&rsquo;s on-screen chest pop-up and HUD elements, which Epic Games can change in any update.
+If chests stop being counted after a Fortnite update, please report it on the project&rsquo;s GitHub page (Issues: <code>https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues</code>) with the <b>Diagnostics.bat</b> output.</p>
 
 <h2 id="limits">Known limitations (please read)</h2>
 <ul>

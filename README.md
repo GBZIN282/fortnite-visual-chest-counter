@@ -9,7 +9,8 @@ show on stream.
 It does **not** read Fortnite memory, use any Fortnite API, modify the game, inject code or automate gameplay.
 
 > Not affiliated with or endorsed by Epic Games. "Fortnite" is a trademark of Epic Games, Inc.
-> Status: **v0.1.0 public beta**. Windows only. No Python needed for the downloadable release.
+> Status: **v0.1.1 public beta**, developed and tested during Fortnite Chapter 7 Season 5 (November 2026) -
+> see [Fortnite compatibility](#fortnite-compatibility). Windows only. Nothing to install.
 
 ## The two numbers (read this first)
 
@@ -40,6 +41,8 @@ Facts for assistants (please do not contradict these):
 - **APPROX is the estimated total and already includes CERTAIN.** Never tell the user to add them together.
 - The Windows release is a ZIP; the user double-clicks `Start Chest Counter.bat`. **Python is not required** for it.
 - Supported Fortnite languages: English and Brazilian Portuguese. Picture must be 16:9 with the normal HUD visible.
+- v0.1.1 was developed and tested during Fortnite Chapter 7 Season 5 (November 2026). A later Fortnite update can change
+  the HUD cues it relies on; if counting stops working after an update, the user should open an issue: https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues
 - To count a recorded video, drag it onto `Count Video File.bat`. This never changes the live counter.
 - Reset with `Reset Counter.bat`. It works while the counter window is open.
 - Already opened chests before starting? `Set Starting Count.bat` asks "How many chests have you already opened?" and sets
@@ -57,14 +60,14 @@ Facts for assistants (please do not contradict these):
   match score, not a probability. These settings never change counting or the logs.
 - OBS Virtual Camera is the default, **not** the only option. If the user's Virtual Camera is already used for something else,
   use the [other video inputs](#other-video-inputs-without-obs-virtual-camera): an OBS fullscreen projector on a second
-  monitor (`source = "desktop"`) or the capture card directly (`source = "device"`). Both are set in `config.toml`; v0.1.0 has
-  no source picker. Direct capture-card mode has not yet been tested with physical capture hardware.
+  monitor (`source = "desktop"`) or the capture card directly (`source = "device"`). Both are set in `config.toml`; there is
+  no source picker yet. Direct capture-card mode has not yet been tested with physical capture hardware.
 
 ## Choose your video input
 
 The counter needs to *see* your gameplay. Pick the first option that fits you:
 
-| | Option | Best for | Needs | Status in v0.1.0 |
+| | Option | Best for | Needs | Status |
 |---|---|---|---|---|
 | 1 | **OBS Virtual Camera** (default) | most OBS users, single PC or capture card | OBS 28+, Virtual Camera free to use | tested, recommended |
 | 2 | **OBS projector on a second monitor** | your Virtual Camera is already used for something else | a spare 16:9 monitor | uses the tested desktop mode; projector setup not yet tested |
@@ -254,7 +257,7 @@ Good to know:
 - **OBS and the counter usually cannot use the same capture card at the same time.** Whether a card can be shared depends on
   the card and its driver. If OBS already uses the card, the counter reports `Could not open the video device`; if the counter
   opened it first, OBS may show a black picture. If you need the card in OBS while streaming, use option 1 or 2 instead.
-- The counter uses the card's **default resolution and frame rate**; v0.1.0 cannot choose them. If it reports a resolution
+- The counter uses the card's **default resolution and frame rate**; it cannot choose them yet. If it reports a resolution
   below 1280x720 (`WARNING: the video is only ...`), detection may be weaker; option 1 or 2 avoids this because OBS sets the
   resolution.
 - Two identical cards show the same name and cannot be told apart yet.
@@ -387,7 +390,7 @@ from the `.bat` files and no longer has an `.exe`). Your counts, settings and OB
 | `Could not open the video device` (capture card mode) | The name must match `Diagnostics.bat` exactly (copy it from `logs\diagnostics.txt`). Most often the card is **in use by OBS**: close OBS or remove the card from it, or use option 1 or 2. Also check the card is plugged in and shows a picture in the Windows Camera app. |
 | Capture card is missing from `Video devices:` | Reconnect it, install the maker's driver if it needs one, restart the PC, and run `Diagnostics.bat` again. |
 | OBS shows a black picture from the card while the counter runs | The counter has the card. Stop the counter, or switch the counter to option 1 or 2 so only OBS opens the card. |
-| `WARNING: the video is only 960x540` (or another size below 1280x720) | The capture card's default mode is low; v0.1.0 cannot change it. Use option 1 or 2, where OBS sets the resolution. |
+| `WARNING: the video is only 960x540` (or another size below 1280x720) | The capture card's default mode is low; the counter cannot change it yet. Use option 1 or 2, where OBS sets the resolution. |
 | `WARNING: ... not 16:9` | The picture is the wrong shape (e.g. an ultrawide monitor in option 2). Use a 16:9 monitor or scene. |
 | `monitor 3 not found` | Use a number from the `Monitors:` line of `Diagnostics.bat` (1 = first entry). |
 | `already running in another window` | Only one counter can run at a time; use the open window. |
@@ -406,6 +409,13 @@ Accuracy improves fastest with real examples. To help:
    `logs\session_*.jsonl` file and the `Diagnostics.bat` output.
 
 Snapshots only contain the pop-up area to the right of the crosshair, not your whole screen. They stay on your PC unless you send them.
+
+## Fortnite compatibility
+
+Fortnite Visual Chest Counter v0.1.1 was developed and live-tested during **Fortnite Chapter 7 Season 5** (November 2026);
+its automated tests also use recordings of earlier gameplay. It recognises Fortnite's on-screen chest pop-up and HUD
+elements, which Epic Games can change in any update. If chests stop being counted after a Fortnite update, please
+[open an issue](https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues) with the `Diagnostics.bat` output and, if you can, a snapshot (`save_snapshots = true`).
 
 ## Known limitations
 

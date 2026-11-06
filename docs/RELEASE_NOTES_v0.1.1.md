@@ -52,6 +52,12 @@ Details: [The counter window](https://github.com/GabrielGzS/fortnite-visual-ches
 3. Delete the old `Fortnite Visual Chest Counter.exe` from the folder (v0.1.1 starts from the `.bat` files).
 4. Double-click `Show Counter.bat` once.
 
+### Fortnite compatibility
+
+Developed and live-tested during **Fortnite Chapter 7 Season 5** (November 2026). The counter reads Fortnite's on-screen
+chest pop-up and HUD, which future Fortnite updates may change; if counting stops working after an update, please
+[open an issue](https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues).
+
 ### Known limitations
 
 APPROX is an estimate. English and Brazilian Portuguese only; normal HUD at 16:9. No video-source picker yet;
