@@ -36,11 +36,22 @@ Facts for assistants (please do not contradict these):
 - Dual-PC users add their **capture-card source** inside `ChestDetectorFeed` on the **streaming PC**.
 - The counter runs on the **streaming / OBS PC**. **Nothing** from this project runs on the gaming PC or console.
 - The counter writes text files into its `obs_output` folder; the user adds OBS **Text (GDI+)** sources with **Read from file**.
+  `chest_counter.txt` is the single easiest file; `certain_chests.txt` / `approximate_chests.txt` hold one number each.
 - **APPROX is the estimated total and already includes CERTAIN.** Never tell the user to add them together.
 - The Windows release is a ZIP; the user double-clicks `Start Chest Counter.bat`. **Python is not required** for it.
 - Supported Fortnite languages: English and Brazilian Portuguese. Picture must be 16:9 with the normal HUD visible.
 - To count a recorded video, drag it onto `Count Video File.bat`. This never changes the live counter.
 - Reset with `Reset Counter.bat`. It works while the counter window is open.
+- All settings are optional and go in `config.toml` (a copy of `config.example.toml`, next to the `.exe`). Restart the
+  counter after saving. A wrong value only prints a `WARNING` and uses the default; nothing can break the counting.
+- What viewers see (`[display]`, v0.1.1+): `show = "both" | "certain" | "approx"` decides what `chest_counter.txt` shows;
+  `certain_text` / `approx_text` are free text where `{count}` is the number (`{certain}` and `{approx}` also work);
+  `\n` makes a new line; `{{` / `}}` are literal braces. Example: `approx_text = "Chest Hunt: {count}/500"`.
+  The counter cannot hide a Text source the user added in OBS: to stop showing a number, hide that source in OBS or use
+  `chest_counter.txt` with `show`. Deleting the changed lines restores the defaults.
+- The counter window (`[console]`, v0.1.1+): `verbosity = "minimal" | "normal" | "debug"`, `colors = true | false`.
+  Green = certain chest, yellow = APPROX-only chest, red = not counted, white on red = error. `match 0.94` is the pop-up word
+  match score, not a probability. These settings never change counting or the logs.
 - OBS Virtual Camera is the default, **not** the only option. If the user's Virtual Camera is already used for something else,
   use the [other video inputs](#other-video-inputs-without-obs-virtual-camera): an OBS fullscreen projector on a second
   monitor (`source = "desktop"`) or the capture card directly (`source = "device"`). Both are set in `config.toml`; v0.1.0 has
@@ -69,6 +80,7 @@ Setup: option 1 → [Single-PC setup](#single-pc-setup) / [Dual-PC setup](#dual-
 
 [Download](#download) · [Quick start](#quick-start) · [Single-PC setup](#single-pc-setup) · [Dual-PC setup](#dual-pc-setup) ·
 [Other video inputs](#other-video-inputs-without-obs-virtual-camera) ·
+[Customize what viewers see](#customize-what-viewers-see) · [The counter window](#the-counter-window-colours-and-detail) ·
 [Show it on stream](#show-it-on-stream-obs-text-sources) · [Recorded video](#counting-a-recorded-video) ·
 [Reset](#reset-and-show) · [Configuration](#configuration-optional) · [Updating](#updating) ·
 [Troubleshooting](#troubleshooting) · [Known limitations](#known-limitations) · [How it works](#how-it-works) · [Development](#development)
@@ -104,8 +116,8 @@ Windows may show "Windows protected your PC" because the program is not code-sig
 1. In OBS: create a scene `ChestDetectorFeed` containing only your game.
 2. In OBS: set Virtual Camera to Scene -> ChestDetectorFeed, click Start Virtual Camera.
 3. Double-click `Start Chest Counter.bat`. Leave the window open and play.
-4. In OBS: add two Text (GDI+) sources (Read from file) that point at
-   obs_output\certain_chests.txt and obs_output\approximate_chests.txt
+4. In OBS: add a Text (GDI+) source (Read from file) that points at
+   obs_output\chest_counter.txt   (shows both numbers; one number or your own words: see "Customize")
 ```
 
 Details follow.
@@ -249,17 +261,73 @@ The counter only writes the **text**. You choose font, size and colour in OBS.
 
 1. Open the scene your **viewers** see (not `ChestDetectorFeed`).
 2. **Sources → + → Text (GDI+)** → name it → OK.
-3. Tick **Read from file**, click **Browse**, choose `obs_output\certain_chests.txt` → style it → OK.
-4. Repeat with `obs_output\approximate_chests.txt`.
+3. Tick **Read from file**, click **Browse**, choose `obs_output\chest_counter.txt` → style it → OK.
 
-| File in `obs_output\` | Contains |
+That one source shows both numbers on two lines. Want only one number, or different words? See
+[Customize what viewers see](#customize-what-viewers-see). You can also use one source per number:
+
+| File in `obs_output\` | Contains (default text) |
 |---|---|
+| `chest_counter.txt` | **the easiest choice:** both numbers, or only one ([`show`](#customize-what-viewers-see) setting) |
 | `certain_chests.txt` | `CERTAIN OPENED CHESTS: 12` |
 | `approximate_chests.txt` | `APPROX. OPENED CHESTS: 47` |
-| `chest_status.txt` | one compact line: `12 certain • ~47 estimated` (use instead of the two above if you want one source) |
+| `chest_status.txt` | one compact line: `12 certain • ~47 estimated` |
 | `last_chest.txt` | the most recent chest, e.g. `CHEST +1 • HIGH` |
 
-Numbers above 999 use a thousands separator (`1,232`). Only the counter should write these files.
+Numbers above 999 use a thousands separator (`1,232`). Only the counter should write these files; their names never change,
+so OBS sources you add keep working after updates.
+
+## Customize what viewers see
+
+All of this is optional and lives in `config.toml` under `[display]` (copy `config.example.toml` to `config.toml` first;
+see [Other video inputs](#other-video-inputs-without-obs-virtual-camera) for how). Save the file and restart the counter.
+
+- `show` decides what `chest_counter.txt` shows: `"both"` (default), `"certain"` or `"approx"`.
+- `certain_text` and `approx_text` are your own wording. `{count}` is where the number goes. `{certain}` and `{approx}`
+  also work anywhere. Any text, symbols and emoji are allowed (emoji need a font in OBS that has them).
+- **The counter cannot hide a Text source you already added in OBS.** To stop showing a number, hide or delete that source
+  in OBS, or use `chest_counter.txt` and change `show`.
+
+| I want... | Put this under `[display]` |
+|---|---|
+| Only the estimated total | `show = "approx"` |
+| Only the confirmed chests | `show = "certain"` |
+| My own words | `approx_text = "Chests opened: {count}"` |
+| A goal | `approx_text = "Chest Hunt: {count}/500"` |
+| Both numbers in one line | `show = "approx"` and `approx_text = "Chests: ~{approx} ({certain} confirmed)"` |
+| The word and the number on separate lines | `approx_text = "CHESTS\n{count}"` |
+| No thousands separator (1232) | `use_thousands_separator = false` |
+| The original text back | delete the lines you changed (or the whole `config.toml`) |
+
+A typo never breaks the counter: it prints a `WARNING` naming the setting and uses the default text instead.
+For a literal `{` or `}` write `{{` or `}}`. (Settings from v0.1.0, `certain_label` / `approximate_label`, still work.)
+
+**Ask your AI assistant:** paste your `config.toml` and say, for example, *"Show only the estimated chests and call it
+My Chest Hunt"*. The facts in [Getting setup help from AI](#getting-setup-help-from-ai) tell it which settings exist.
+
+## The counter window (colours and detail)
+
+The black window shows each decision as it happens:
+
+```text
+21:42:11  [CERTAIN] chest +1    CERTAIN   20 | APPROX  231  match 0.94 (HIGH)
+21:42:19  [APPROX ] chest ~+1   CERTAIN   20 | APPROX  232  match 0.78 (MEDIUM)
+21:42:26  [REJECT ] not counted CERTAIN   20 | APPROX  232  match 0.77 (LOW) - shooting at the same moment
+21:42:30  [STATUS ]  15.0 fps (source 30.0) | dropped 0 | 6 ms/frame | CERTAIN 20 | APPROX 232
+```
+
+**Green** = certain chest · **yellow** = counted in APPROX only · **red** = looked at but not counted ·
+**white on red** = an error that needs your attention · **cyan** = status. `match` is how closely the pop-up word matched
+(0 to 1); it is evidence, not a percentage or a probability.
+
+| Under `[console]` | Effect |
+|---|---|
+| `verbosity = "minimal"` | only counted chests, warnings and errors |
+| `verbosity = "normal"` | default: also rejected pop-ups and a status line every few seconds |
+| `verbosity = "debug"` | everything, with the full reason for each decision (handy when reporting a problem) |
+| `colors = false` | plain white text (colours also switch off by themselves if the window cannot show them) |
+
+These settings only change the window. Counting and the logs in `logs\` are always the same.
 
 ## Counting a recorded video
 
@@ -283,8 +351,9 @@ The recording should be clean 16:9 gameplay with the normal HUD, in English or B
 
 Most people change nothing. To customise, copy `config.example.toml` to `config.toml` (same folder as the `.exe`), edit it in Notepad
 (every option is explained inside) and restart the counter. A mistake only prints a warning and the default is used.
-Common options: `languages` (`["en"]`, `["pt"]` or both), `certain_min_tier`, `certain_label`, `approximate_label`,
-`use_thousands_separator`, `process_fps`, `[logging]`, `[live] source`.
+Common options: `[display]` wording and what to show ([details](#customize-what-viewers-see)), `[console]` colours and
+detail ([details](#the-counter-window-colours-and-detail)), `[live] source` ([video inputs](#choose-your-video-input)),
+`languages` (`["en"]`, `["pt"]` or both), `certain_min_tier`, `process_fps`, `[logging]`.
 
 ## Updating
 

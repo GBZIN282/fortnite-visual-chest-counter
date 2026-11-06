@@ -4,7 +4,16 @@
 
 Detector frozen at the `rc1` baselines (`tests/baselines/*_rc1.json`).
 
-## v0.1.1 candidates (not implemented yet)
+## v0.1.1 - presentation (in preparation)
+
+No detection changes. Notes: [RELEASE_NOTES_v0.1.1.md](RELEASE_NOTES_v0.1.1.md).
+
+- Customisable overlay text (`certain_text`, `approx_text`, `{count}` / `{certain}` / `{approx}`), `show` mode, and the
+  single `chest_counter.txt` overlay file. v0.1.0 settings and file names keep working.
+- Colour-coded console with `minimal` / `normal` / `debug` verbosity.
+- In-zip guide updated with the other video inputs.
+
+## v0.1.2 candidates - video inputs (not implemented yet)
 
 Input layer only; the detector stays frozen. Rationale and measurements: [INPUT_OPTIONS.md](INPUT_OPTIONS.md).
 
@@ -16,7 +25,6 @@ Input layer only; the detector stays frozen. Rationale and measurements: [INPUT_
    default; user overrides `video_size` / `framerate`. Avoid 4K / 60 fps (the detector uses 1280x720 @ 15 fps).
 4. **Clear "device in use" message** when OBS (or another app) already holds the capture card.
 5. **Tell identical capture cards apart** (DirectShow alternative names).
-6. Keep `packaging/README.html` (in the zip) in line with the GitHub README's "Choose your video input" section.
 
 Validation required before release: see the checklist at the end of [INPUT_OPTIONS.md](INPUT_OPTIONS.md).
 

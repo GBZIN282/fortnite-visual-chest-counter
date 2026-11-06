@@ -149,6 +149,7 @@ def build(out, ffmpeg_zip, ffmpeg_source=None):
     (obs / "certain_chests.txt").write_text("CERTAIN OPENED CHESTS: 0\n", encoding="utf-8")
     (obs / "approximate_chests.txt").write_text("APPROX. OPENED CHESTS: 0\n", encoding="utf-8")
     (obs / "chest_status.txt").write_text("0 certain \u2022 ~0 estimated\n", encoding="utf-8")
+    (obs / "chest_counter.txt").write_text("CERTAIN OPENED CHESTS: 0\nAPPROX. OPENED CHESTS: 0\n", encoding="utf-8")
     (obs / "last_chest.txt").write_text("NO CHESTS YET\n", encoding="utf-8")
 
     audit(app_root)

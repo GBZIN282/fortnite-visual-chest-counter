@@ -410,7 +410,8 @@ def test_video_command_missing_file_is_friendly():
 
 def test_version_flag():
     code, text = run_main(["--version"])
-    assert code == 0 and "v0.1.0" in text
+    from fortnite_chest_counter.version import __version__
+    assert code == 0 and f"v{__version__}" in text
 
 
 def _hold_lock_in_child(state):
@@ -518,6 +519,158 @@ def test_console_close_is_a_clean_stop():
         assert not chest_counter.counter_is_running(tmp / "state" / "chest_state.json"), "lock left behind"
         assert not list((tmp / "state").glob("*.tmp")), "half-written save left behind"
         assert json.loads((tmp / "state" / "chest_state.json").read_text(encoding="utf-8"))["certain"] == 0
+
+
+# ------------------------------------------------------------------ 5. customisable overlay text (v0.1.1)
+
+def _obs_files(tmp, display_overrides, certain=20, approx=231):
+    display = dict(DEFAULTS["display"], **display_overrides)
+    state = chest_counter.fresh_state()
+    state.update(certain=certain, approximate=approx)
+    chest_counter.write_obs_files(state, tmp, display)
+    return {p.name: p.read_text(encoding="utf-8") for p in Path(tmp).glob("*.txt")}
+
+
+def test_default_overlay_files_are_unchanged_from_v010_plus_one_new_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        files = _obs_files(tmp, {}, 1232, 1247)
+    assert files["certain_chests.txt"] == "CERTAIN OPENED CHESTS: 1,232\n"
+    assert files["approximate_chests.txt"] == "APPROX. OPENED CHESTS: 1,247\n"
+    assert files["chest_status.txt"] == "1,232 certain • ~1,247 estimated\n"
+    assert files["chest_counter.txt"] == "CERTAIN OPENED CHESTS: 1,232\nAPPROX. OPENED CHESTS: 1,247\n"
+    assert set(files) == {"certain_chests.txt", "approximate_chests.txt", "chest_status.txt", "chest_counter.txt", "last_chest.txt"}
+
+
+def test_show_modes_for_the_single_overlay_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert _obs_files(tmp, {"show": "approx"})["chest_counter.txt"] == "APPROX. OPENED CHESTS: 231\n"
+        assert _obs_files(tmp, {"show": "certain"})["chest_counter.txt"] == "CERTAIN OPENED CHESTS: 20\n"
+        assert _obs_files(tmp, {"show": "both"})["chest_counter.txt"].count("\n") == 2
+
+
+def test_custom_wording_placeholders_unicode_braces_and_new_lines():
+    custom = {"approx_text": "Chest Hunt: {count}/500 🏆", "certain_text": "Confirmed {count} of ~{approx} ({certain})",
+              "combined_status_format": "{{chests}} {approx}", "show": "both"}
+    with tempfile.TemporaryDirectory() as tmp:
+        files = _obs_files(tmp, custom, 20, 1231)
+        assert files["approximate_chests.txt"] == "Chest Hunt: 1,231/500 🏆\n"
+        assert files["certain_chests.txt"] == "Confirmed 20 of ~1,231 (20)\n"
+        assert files["chest_status.txt"] == "{chests} 1,231\n"
+        two_lines = _obs_files(tmp, {"approx_text": "Chests\n{count}", "show": "approx"})["chest_counter.txt"]
+        assert two_lines == "Chests\n231\n"
+
+
+def test_bad_wording_in_config_warns_and_falls_back():
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "config.toml"
+        p.write_text('[display]\napprox_text = "Total {chests}"\ncertain_text = "Oops {"\nshow = "everything"\n'
+                     '[console]\nverbosity = "loud"\ncolors = "yes"\n', encoding="utf-8")
+        cfg, _, warnings = settings.load_config(p)
+    text = "\n".join(warnings)
+    for key in ("approx_text", "certain_text", "show", "verbosity", "colors"):
+        assert key in text, key
+    assert cfg["display"] == DEFAULTS["display"] and cfg["console"] == DEFAULTS["console"]
+
+
+def test_a_broken_template_at_runtime_never_crashes_the_counter():
+    with tempfile.TemporaryDirectory() as tmp:
+        files = _obs_files(tmp, {"approx_text": "{nope}", "certain_text": "{", "combined_status_format": "{0}"})
+    assert files["approximate_chests.txt"] == "APPROX. OPENED CHESTS: 231\n"            # defaults used instead
+    assert files["certain_chests.txt"] == "CERTAIN OPENED CHESTS: 20\n"
+
+
+def test_v010_config_labels_still_change_the_overlay():
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "config.toml"
+        p.write_text('[display]\ncertain_label = "CONFIRMED {wow}"\n', encoding="utf-8")
+        cfg, _, warnings = settings.load_config(p)
+        assert warnings == [] and cfg["display"]["certain_text"] == "CONFIRMED {{wow}}: {count}"
+        assert _obs_files(tmp, cfg["display"], 5, 9)["certain_chests.txt"] == "CONFIRMED {wow}: 5\n"
+        p.write_text('[display]\ncertain_label = "OLD"\ncertain_text = "NEW {count}"\n', encoding="utf-8")
+        cfg, _, _ = settings.load_config(p)
+        assert cfg["display"]["certain_text"] == "NEW {count}"                         # the new key wins
+
+
+def test_show_command_uses_the_custom_wording():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Path(tmp) / "config.toml"
+        cfg.write_text('[display]\napprox_text = "My Chest Hunt: {count}"\n', encoding="utf-8")
+        code, text = run_main(["show", "--config", str(cfg)] + args_for(tmp))
+    assert code == 0 and "My Chest Hunt: 0" in text
+
+
+# ------------------------------------------------------------------ 6. readable console (v0.1.1)
+
+def _console(verbosity, colors=False):
+    from fortnite_chest_counter.console import Console
+    c = Console()
+    c.verbosity, c.colors = verbosity, colors
+    return c
+
+
+def _printed(fn):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fn()
+    return buf.getvalue()
+
+
+EV_CERTAIN = {"certain_counted": True, "approx_counted": True, "source": "popup", "popup_score": 0.94,
+              "adjusted_tier": "HIGH", "reason": "popup 0.94 en:CHEST -> HIGH", "event_id": "E0001", "stamp": "01:02.00"}
+EV_APPROX = dict(EV_CERTAIN, certain_counted=False, popup_score=0.78, adjusted_tier="MEDIUM",
+                 reason="popup 0.78 en:CHEST -> MEDIUM; MEDIUM counted approx: en:CHEST word is reliable")
+EV_REJECT = dict(EV_CERTAIN, certain_counted=False, approx_counted=False, popup_score=0.77, adjusted_tier="LOW",
+                 shooting_negative=True, reason="popup 0.77 pt -> MEDIUM; adjusted to LOW (shooting=True, interaction=False)")
+EV_PROMPT_REJECT = {"certain_counted": False, "approx_counted": False, "source": "interaction_object",
+                    "interaction_score": 0.75, "adjusted_tier": "-", "reason": "prompt 0.75 but no chest-like object"}
+
+
+def test_console_lines_are_readable_without_colours():
+    out = _printed(lambda: [_console("normal").event(e, "20", "231") for e in (EV_CERTAIN, EV_APPROX, EV_REJECT)])
+    lines = out.splitlines()
+    assert "\x1b[" not in out and len(lines) == 3
+    assert "[CERTAIN]" in lines[0] and "chest +1" in lines[0] and "match 0.94 (HIGH)" in lines[0]
+    assert "[APPROX ]" in lines[1] and "chest ~+1" in lines[1]
+    assert "[REJECT ]" in lines[2] and "not counted" in lines[2] and "shooting" in lines[2]
+    assert "CERTAIN   20 | APPROX  231" in lines[0]
+    assert max(len(l) for l in lines) < 120                                       # never wraps in a 120-column window
+    assert "%" not in out and "confidence" not in out.lower()                      # scores are not probabilities
+
+
+def test_console_colours_use_one_meaning_per_colour():
+    c = _console("normal", colors=True)
+    green, yellow, red = (_printed(lambda e=e: c.event(e, "1", "2")) for e in (EV_CERTAIN, EV_APPROX, EV_REJECT))
+    assert "\x1b[92m" in green and "\x1b[93m" in yellow and "\x1b[91m" in red
+    err = _printed(lambda: c.error("Could not open the video device\nhint"))
+    assert "\x1b[97;41m" in err and "hint" in err                                    # errors look different from rejections
+
+
+def test_console_verbosity_levels():
+    events = (EV_CERTAIN, EV_APPROX, EV_REJECT, EV_PROMPT_REJECT)
+    minimal = _printed(lambda: [_console("minimal").event(e, "1", "2") for e in events])
+    normal = _printed(lambda: [_console("normal").event(e, "1", "2") for e in events])
+    debug = _printed(lambda: [_console("debug").event(e, "1", "2") for e in events])
+    assert "[REJECT ]" not in minimal and minimal.count("\n") == 2
+    assert normal.count("[REJECT ]") == 1                                            # generic button prompts: debug only
+    assert debug.count("[REJECT ]") == 2 and "E0001" in debug and "adjusted to LOW" in debug
+    assert _printed(lambda: _console("minimal").status("15 fps")) == ""
+
+
+def test_console_never_breaks_when_the_window_is_gone():
+    import builtins
+    c, real = _console("normal"), builtins.print
+    builtins.print = lambda *a, **k: (_ for _ in ()).throw(OSError("console closed"))
+    try:
+        c.event(EV_CERTAIN, "1", "1"); c.error("x"); c.status("y")                  # must not raise
+    finally:
+        builtins.print = real
+
+
+def test_colours_are_off_when_output_is_redirected():
+    from fortnite_chest_counter.console import Console
+    c = Console()
+    c.configure("normal", True, stream=io.StringIO())
+    assert c.colors is False
 
 
 if __name__ == "__main__":

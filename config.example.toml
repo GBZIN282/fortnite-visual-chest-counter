@@ -27,13 +27,53 @@ count_interaction_object_as_approx = true   # button + chest-looking object, eve
 medium_counts_alone_languages = ["en"]      # languages whose medium-confidence popup counts by itself
 
 [display]
-# The text shown in your OBS text sources.
-certain_label = "CERTAIN OPENED CHESTS"
-approximate_label = "APPROX. OPENED CHESTS"
-# The one-line file chest_status.txt. Placeholders: {certain} and {approximate}
+# What your viewers see. The counter only writes TEXT FILES (in the obs_output folder); OBS shows them with a
+# "Text (GDI+)" source that has "Read from file" ticked. Fonts, colours and size are set in OBS, not here.
+#
+# The two numbers:
+#   CERTAIN = chests detected with strong evidence
+#   APPROX  = the estimated TOTAL, which already INCLUDES the certain ones (never add them together)
+#
+# Files the counter writes (their names never change):
+#   chest_counter.txt       <- easiest: ONE source that shows what "show" below says
+#   certain_chests.txt      always the certain_text
+#   approximate_chests.txt  always the approx_text
+#   chest_status.txt        always the combined_status_format (one line)
+#   last_chest.txt          the most recent chest
+# The counter cannot hide a Text source you added in OBS: to stop showing a number, delete or hide that source in OBS,
+# or use chest_counter.txt and change "show".
+
+# What chest_counter.txt shows:
+#   "both"    -> certain_text on the first line, approx_text on the second
+#   "certain" -> only certain_text
+#   "approx"  -> only approx_text  (the estimated total)
+show = "both"
+
+# Your own wording. {count} is where the number goes. You may also use {certain} and {approx} anywhere.
+# Any text, symbols and emoji are fine (whether emoji display depends on the font you pick in OBS).
+# For a literal { or } write {{ or }}.   For a second line inside one text, write \n
+# Examples:
+#   approx_text = "Chests opened: {count}"
+#   approx_text = "Chest Hunt: {count}/500"
+#   certain_text = "Confirmed: {count}"
+certain_text = "CERTAIN OPENED CHESTS: {count}"
+approx_text = "APPROX. OPENED CHESTS: {count}"
+
+# The one-line file chest_status.txt. Placeholders: {certain} and {approx}
 combined_status_format = "{certain} certain • ~{approximate} estimated"
+
 # true -> 1,232      false -> 1232
 use_thousands_separator = true
+
+[console]
+# The black counter window (not what viewers see).
+#   "minimal" -> only chests that were counted, plus warnings and errors
+#   "normal"  -> also pop-ups that were NOT counted (red) and a status line every few seconds
+#   "debug"   -> everything, with the full reason for each decision (useful when reporting a problem)
+verbosity = "normal"
+# Coloured lines: green = certain chest, yellow = approx-only chest, red = not counted, white-on-red = error.
+# Set to false for plain text.
+colors = true
 
 [state]
 # Keep the counts when the program is closed and reopened.

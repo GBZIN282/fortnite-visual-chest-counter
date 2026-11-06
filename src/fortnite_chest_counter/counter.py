@@ -40,6 +40,7 @@ from pathlib import Path
 
 import numpy as np
 
+from fortnite_chest_counter.console import CONSOLE
 from fortnite_chest_counter.detection import fusion
 from fortnite_chest_counter import paths
 from fortnite_chest_counter import settings
@@ -139,16 +140,34 @@ def last_chest_text(state):
     return LAST_CHEST_NONE
 
 
+def display_text(display, which, state):
+    """The user's text for one counter ('certain' or 'approx'), with the numbers filled in. Never raises."""
+    key = "certain_text" if which == "certain" else "approx_text"
+    count = state["certain"] if which == "certain" else state["approximate"]
+    return settings.render_text(display.get(key, settings.DEFAULTS["display"][key]), settings.DEFAULTS["display"][key],
+                                count=count, certain=state["certain"], approx=state["approximate"],
+                                thousands=display["use_thousands_separator"])
+
+
+def overlay_text(display, state):
+    """obs_output/chest_counter.txt: one OBS Text source that shows what [display] show asks for."""
+    show = display.get("show", "both")
+    if show == "certain":
+        return display_text(display, "certain", state)
+    if show == "approx":
+        return display_text(display, "approx", state)
+    return display_text(display, "certain", state) + "\n" + display_text(display, "approx", state)
+
+
 def write_obs_files(state, obs_dir, display):
-    """The four OBS text files. Every number goes through settings.format_count."""
-    thousands = display["use_thousands_separator"]
-    certain = settings.format_count(state["certain"], thousands)
-    approx = settings.format_count(state["approximate"], thousands)
+    """The OBS text files. File names never change (OBS sources point at them); only their text is customisable."""
     obs_dir = Path(obs_dir)
-    atomic_write(obs_dir / "certain_chests.txt", f"{display['certain_label']}: {certain}\n")
-    atomic_write(obs_dir / "approximate_chests.txt", f"{display['approximate_label']}: {approx}\n")
-    atomic_write(obs_dir / "chest_status.txt",
-                 display["combined_status_format"].format(certain=certain, approximate=approx) + "\n")
+    atomic_write(obs_dir / "certain_chests.txt", display_text(display, "certain", state) + "\n")
+    atomic_write(obs_dir / "approximate_chests.txt", display_text(display, "approx", state) + "\n")
+    atomic_write(obs_dir / "chest_status.txt", settings.render_text(
+        display["combined_status_format"], settings.DEFAULTS["display"]["combined_status_format"],
+        certain=state["certain"], approx=state["approximate"], thousands=display["use_thousands_separator"]) + "\n")
+    atomic_write(obs_dir / "chest_counter.txt", overlay_text(display, state) + "\n")
     atomic_write(obs_dir / "last_chest.txt", last_chest_text(state) + "\n")
 
 
@@ -215,7 +234,7 @@ class CounterSession:
     def _warn_once(self, key, message):
         if key not in self._warned:
             self._warned.add(key)
-            print(f"WARNING: {message}")
+            CONSOLE.warn(message)
 
     def fmt(self, n):
         return settings.format_count(n, self.display["use_thousands_separator"])
@@ -288,11 +307,8 @@ class CounterSession:
                             "counts_after": {"certain": st["certain"], "approximate": st["approximate"]},
                             "obs_write_s": round(write_s, 4), "logged_at": now_iso()},
                            counted=bool(certain_inc or approx_inc))
-            flag = "CERTAIN+1" if certain_inc else "APPROX+1 " if approx_inc else "not counted"
             if not quiet:
-                print(f"  [{mmss(now_t)}] {event_id} event@{ev['stamp']} {ev['source']:18s} tier {ev['adjusted_tier']:>6s} "
-                      f"-> {flag:11s} | certain {self.fmt(st['certain'])}  approx {self.fmt(st['approximate'])} "
-                      f"| +{ev['latency_s']:.1f}s | {ev['reason'][:100]}")
+                CONSOLE.event(ev, self.fmt(st["certain"]), self.fmt(st["approximate"]))
             applied.append(ev)
         return applied
 
@@ -307,8 +323,9 @@ def make_config(args):
                  ("logging", "dir"): getattr(args, "log_dir", None), ("live", "source"): getattr(args, "source", None),
                  ("live", "device"): getattr(args, "device", None), ("live", "monitor"): getattr(args, "monitor", None)}
     cfg, origin, warnings = settings.load_config(getattr(args, "config", None), overrides)
+    CONSOLE.configure(cfg["console"]["verbosity"], cfg["console"]["colors"])
     for w in warnings:
-        print(f"WARNING: {w}")
+        CONSOLE.warn(w)
     from fortnite_chest_counter import estimator
     estimator.configure(cfg["detector"])
     estimator.SAVE_SNAPSHOTS = cfg["logging"]["enabled"] and cfg["logging"]["save_snapshots"]
@@ -487,7 +504,7 @@ def cmd_video(args):
             last_t, frames = t, frames + 1
             session.apply(est.process_frame(t, frame), t)
             if t >= next_report:
-                print(f"  ... {mmss(t)} of video analysed | CERTAIN {session.fmt(state['certain'])} | APPROX {session.fmt(state['approximate'])}")
+                CONSOLE.status(f"{mmss(t)} of video analysed | CERTAIN {session.fmt(state['certain'])} | APPROX {session.fmt(state['approximate'])}")
                 next_report += 60.0
         session.apply(est.flush(), last_t)
     except KeyboardInterrupt:
@@ -496,7 +513,7 @@ def cmd_video(args):
         raise UserError("No picture could be read from this file. Is it a video that your PC can play? "
                         "(Details are printed just above if FFmpeg reported a problem.)")
     session.write_obs()
-    print(f"\nFinished: {mmss(last_t)} of video analysed in {(time.time() - wall0) / 60:.1f} min.\n")
+    CONSOLE.line(f"\nFinished: {mmss(last_t)} of video analysed in {(time.time() - wall0) / 60:.1f} min.\n", "bold")
     show_counts(session)
     print("\n  APPROX is the estimated TOTAL and already includes the CERTAIN chests (do not add them together).")
     print(f"  Text files saved in: {session.obs_dir.resolve()}")
@@ -510,7 +527,7 @@ OBS_STEPS = """  1. Open OBS Studio
 
 
 def banner():
-    print(f"{APP_NAME} v{__version__} ({RELEASE_CHANNEL})")
+    CONSOLE.line(f"{APP_NAME} v{__version__} ({RELEASE_CHANNEL})", "bold")
 
 
 def preflight(cfg, needs_video=True):
@@ -710,10 +727,10 @@ def friendly_rate_note(res):
     if not res:
         return
     if abs(res[0] / res[1] - 16 / 9) > 0.05:
-        print(f"WARNING: the video is {res[0]}x{res[1]}, which is not 16:9. The picture will be stretched and the chest "
+        CONSOLE.warn(f"the video is {res[0]}x{res[1]}, which is not 16:9. The picture will be stretched and the chest "
               f"detection may not work. Make the ChestDetectorFeed scene 16:9 (for example 1920x1080).")
     elif res[0] < 1280:
-        print(f"WARNING: the video is only {res[0]}x{res[1]}. Detection works best at 1280x720 or higher.")
+        CONSOLE.warn(f"the video is only {res[0]}x{res[1]}. Detection works best at 1280x720 or higher.")
 
 
 def cmd_live(args):
@@ -742,14 +759,14 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                                      video=args.video, start=args.start or 0.0, duration=args.duration)
     except ValueError as error:
         raise UserError(str(error))
-    print(f"Connecting to {source.label} ...")
+    CONSOLE.info(f"Connecting to {source.label} ...")
     try:
         info = source.open(timeout=15.0)
     except (RuntimeError, OSError) as error:
         raise UserError(explain_source_failure(kind, source.label, str(error))) from error
     res, in_fps = info["input_resolution"], info["input_fps"]
-    print(f"Connected: video {res[0]}x{res[1]} @ {in_fps} fps" if res else "Connected.",
-          f"-> analysed at {fps} frames per second")
+    CONSOLE.info((f"Connected: video {res[0]}x{res[1]} @ {in_fps} fps" if res else "Connected.")
+                 + f" -> analysed at {fps} frames per second")
     friendly_rate_note(res)
     print(f"Settings: {origin}")
     print("Counter: " + (f"continuing from {session.fmt(state['certain'])} certain / {session.fmt(state['approximate'])} approx"
@@ -757,7 +774,8 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
           + ("" if session.persist else " (saving is turned off in config.toml)"))
     print(f"OBS text files: {session.obs_dir.resolve()}")
     print("Counting has started. Counts are kept when you stop and restart.")
-    print("To stop: press Q in this window (or Ctrl+C, or just close the window). Nothing is lost.\n")
+    print("To stop: press Q in this window (or Ctrl+C, or just close the window). Nothing is lost.")
+    CONSOLE.line(f"Window: {CONSOLE.verbosity} detail, colours {'on' if CONSOLE.colors else 'off'} ([console] in config.toml)\n", "dim")
 
     est = estimator.ChestEstimator()
     session.save()
@@ -793,14 +811,14 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
             if now_m - last_sync >= 1.0:
                 last_sync = now_m
                 if session.sync_external_changes():
-                    print(f"  Counter changed by Reset/Adjust -> CERTAIN {session.fmt(state['certain'])} | "
-                          f"APPROX {session.fmt(state['approximate'])}")
+                    CONSOLE.info(f"Counter changed by Reset/Adjust -> CERTAIN {session.fmt(state['certain'])} | "
+                                 f"APPROX {session.fmt(state['approximate'])}")
             if now_m - last_status >= interval:
                 span = now_m - last_status
                 det_fps = (source.frames_processed - processed_at_status) / span
-                print(f"LIVE  {det_fps:4.1f} detector fps | source {in_fps or '?'} fps | CERTAIN {session.fmt(state['certain'])} "
-                      f"| APPROX {session.fmt(state['approximate'])} | dropped {session.fmt(source.frames_dropped)} "
-                      f"| {1000 * np.mean(recent):.0f} ms/frame")
+                CONSOLE.status(f"{det_fps:4.1f} fps (source {in_fps or '?'}) | dropped {session.fmt(source.frames_dropped)} "
+                               f"| {1000 * np.mean(recent):.0f} ms/frame | CERTAIN {session.fmt(state['certain'])} "
+                               f"| APPROX {session.fmt(state['approximate'])}")
                 last_status, processed_at_status = now_m, source.frames_processed
             if now_m - last_status_log >= STATUS_LOG_SECONDS:
                 span = now_m - last_status_log
@@ -819,7 +837,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
             if stop_reason == "stream ended" and kind in ("obs-camera", "device", "desktop") \
                     and not (guard is not None and guard.requested.is_set()):
                 stop_reason = "video source stopped"
-                print("\nThe video stopped coming in (was OBS or the Virtual Camera closed?).")
+                CONSOLE.warn("the video stopped coming in (was OBS or the Virtual Camera closed?).")
     except KeyboardInterrupt:
         stop_reason = "Ctrl+C"
     except OSError:
@@ -848,8 +866,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
         try:
             print(f"\nStopped ({stop_reason}). Analysed {stats['frames_processed']:,} frames in "
                   f"{stats['seconds'] / 60:.1f} min, {stats['frames_dropped']:,} dropped. (Full details: {session.log.path or 'logging is off'})")
-            print(f"{session.display['certain_label']}: {session.fmt(state['certain'])} | "
-                  f"{session.display['approximate_label']}: {session.fmt(state['approximate'])}")
+            CONSOLE.line(f"{display_text(session.display, 'certain', state)} | {display_text(session.display, 'approx', state)}", "bold")
         except (OSError, ValueError):
             pass                                            # no console any more (window closed)
 
@@ -875,8 +892,8 @@ def cmd_devices(args):
 
 
 def show_counts(session):
-    print(f"  {session.display['certain_label']}: {session.fmt(session.state['certain'])}")
-    print(f"  {session.display['approximate_label']}: {session.fmt(session.state['approximate'])}")
+    CONSOLE.line(f"  {display_text(session.display, 'certain', session.state)}", "green")
+    CONSOLE.line(f"  {display_text(session.display, 'approx', session.state)}", "yellow")
 
 
 def cmd_show(args):
@@ -1039,7 +1056,8 @@ def report_crash(error):
                          + "".join(traceback.format_exception(type(error), error, error.__traceback__)), encoding="utf-8")
     except OSError:
         pass
-    print(f"\nSomething unexpected went wrong ({type(error).__name__}: {error}).")
+    CONSOLE.line("")
+    CONSOLE.error(f"Something unexpected went wrong ({type(error).__name__}: {error}).")
     print("Your counter is safe - it is saved after every chest.")
     if where:
         print(f"Technical details were saved to: {where}")
@@ -1113,11 +1131,13 @@ def main(argv=None):
         argv = ["live"]
     parser = build_parser()
     args = parser.parse_args(argv)
+    CONSOLE.configure()
     try:
         args.func(args)
         return 0
     except UserError as error:
-        print(f"\n{error}")
+        CONSOLE.line("")
+        CONSOLE.error(str(error))
         return 1
     except KeyboardInterrupt:
         return 0

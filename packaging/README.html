@@ -36,7 +36,7 @@
 <main>
 
 <h1>Fortnite Visual Chest Counter</h1>
-<p class="sub">Visual chest detection for OBS, capture cards &amp; video files &middot; v0.1.0 public beta &middot; Windows 10 / 11 &middot; no Python or programming needed</p>
+<p class="sub">Visual chest detection for OBS, capture cards &amp; video files &middot; v0.1.1 public beta &middot; Windows 10 / 11 &middot; no Python or programming needed</p>
 
 <h2 style="border-top:none;margin-top:1rem">What this is</h2>
 <p>A small helper for streamers. It watches your gameplay picture (through OBS) and keeps a running count of
@@ -67,7 +67,10 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
   <li><a href="#need">What you need</a></li>
   <li><a href="#single">Single-PC setup</a></li>
   <li><a href="#dual">Two-PC setup</a></li>
+  <li><a href="#inputs">Other video inputs</a></li>
   <li><a href="#overlay">Show it on stream</a></li>
+  <li><a href="#custom">Customize text</a></li>
+  <li><a href="#window">Counter window</a></li>
   <li><a href="#video">Recorded video</a></li>
   <li><a href="#reset">Reset</a></li>
   <li><a href="#settings">Settings</a></li>
@@ -90,7 +93,7 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
   <li>Unzip the folder anywhere you can write files (Desktop or Documents is fine).</li>
   <li>In OBS: make a scene called <b>ChestDetectorFeed</b> with only your game in it, and start the <b>Virtual Camera</b> from that scene.</li>
   <li>Double-click <b>Start Chest Counter.bat</b> and play.</li>
-  <li>In OBS, add two <b>Text</b> sources that read <code>obs_output\certain_chests.txt</code> and <code>obs_output\approximate_chests.txt</code>.</li>
+  <li>In OBS, add a <b>Text</b> source that reads <code>obs_output\chest_counter.txt</code> (both numbers; one number or your own words: see <a href="#custom">Customize</a>).</li>
 </ol>
 <p>Details for each step are below.</p>
 
@@ -156,25 +159,66 @@ Streaming PC &#8594; OBS &#8594; scene "ChestDetectorFeed" &#8594; Virtual Camer
 To try: make a copy of <code>config.example.toml</code> named <code>config.toml</code>, set <code>source = "device"</code> and <code>device = "exact device name"</code> under <code>[live]</code>
 (<b>Diagnostics.bat</b> lists the names), and start the counter. If it says the device cannot be opened, switch back to the Virtual Camera method.</div>
 
+<h2 id="inputs">Other video inputs (Virtual Camera already in use?)</h2>
+<p>OBS Virtual Camera is the easiest input, but not the only one. Both options below are set in <code>config.toml</code>
+(copy <code>config.example.toml</code>, rename the copy to <code>config.toml</code>, edit it with Notepad, save, restart the counter).</p>
+<table>
+  <tr><th>Option</th><th>Put under <code>[live]</code></th><th>Good to know</th></tr>
+  <tr><td><b>OBS projector on a second monitor</b>: in OBS right-click your gameplay source &rarr; <b>Fullscreen Projector (Source)</b> &rarr; your second monitor</td>
+      <td><code>source = "desktop"</code><br><code>monitor = 2</code></td>
+      <td>OBS keeps the capture card and the Virtual Camera. Needs a spare <b>16:9</b> monitor; keep other windows off it. <code>Diagnostics.bat</code> lists the monitor numbers. Projector setup not yet tested.</td></tr>
+  <tr><td><b>Capture card directly</b> (no OBS)</td>
+      <td><code>source = "device"</code><br><code>device = "Exact device name"</code></td>
+      <td>Copy the name from <code>logs\diagnostics.txt</code> after running <code>Diagnostics.bat</code>. Many cards work with only <b>one</b> program at a time, so close OBS or remove the card from it. Uses the card&rsquo;s default resolution. Not yet tested with physical cards.</td></tr>
+</table>
+
 <h2 id="overlay">Show it on stream (OBS text sources)</h2>
 <p>The counter only writes the <i>text</i>. You style it in OBS however you like.</p>
 <ol>
   <li>Open the scene your <b>viewers see</b> (not ChestDetectorFeed).</li>
-  <li>In <b>Sources</b> click <b>+</b> &rarr; <b>Text (GDI+)</b> &rarr; name it &ldquo;Certain chests&rdquo; &rarr; OK.</li>
-  <li>Tick <b>Read from file</b>, click <b>Browse</b> and choose <code>obs_output\certain_chests.txt</code> (inside the counter folder).</li>
+  <li>In <b>Sources</b> click <b>+</b> &rarr; <b>Text (GDI+)</b> &rarr; name it &ldquo;Chests&rdquo; &rarr; OK.</li>
+  <li>Tick <b>Read from file</b>, click <b>Browse</b> and choose <code>obs_output\chest_counter.txt</code> (inside the counter folder).</li>
   <li>Choose a font, size and colour. Click OK and place it on screen.</li>
-  <li>Repeat for <code>obs_output\approximate_chests.txt</code> (name it &ldquo;Approx chests&rdquo;).</li>
 </ol>
+<p>That one source shows both numbers on two lines. To show only one number or your own words, see <a href="#custom">Customize what viewers see</a>. You can also use one source per number:</p>
 <table>
-  <tr><th>File (in <code>obs_output</code>)</th><th>Shows</th></tr>
+  <tr><th>File (in <code>obs_output</code>)</th><th>Shows (default text)</th></tr>
+  <tr><td><code>chest_counter.txt</code></td><td><b>Easiest:</b> both numbers, or only one (the <code>show</code> setting).</td></tr>
   <tr><td><code>certain_chests.txt</code></td><td><code>CERTAIN OPENED CHESTS: 12</code></td></tr>
   <tr><td><code>approximate_chests.txt</code></td><td><code>APPROX. OPENED CHESTS: 47</code></td></tr>
-  <tr><td><code>chest_status.txt</code></td><td>One compact line: <code>12 certain &bull; ~47 estimated</code> &mdash; use this instead if you only want a single text source.</td></tr>
+  <tr><td><code>chest_status.txt</code></td><td>One compact line: <code>12 certain &bull; ~47 estimated</code></td></tr>
   <tr><td><code>last_chest.txt</code></td><td>The most recent chest, e.g. <code>CHEST +1 &bull; HIGH</code>.</td></tr>
 </table>
 <p>Numbers over 999 get a thousands separator (<code>1,232</code>). Only the counter writes these files; don&rsquo;t edit them by hand.
-The words (&ldquo;CERTAIN OPENED CHESTS&rdquo;&hellip;) can be changed in <code>config.toml</code>.</p>
+Their names never change, so your OBS sources keep working after updates.</p>
 <div class="note">Put these text sources only in the scene your <b>viewers</b> see, never in ChestDetectorFeed.</div>
+
+<h2 id="custom">Customize what viewers see</h2>
+<p>Optional. In <code>config.toml</code> under <code>[display]</code>, then save and restart the counter.
+<code>{count}</code> is where the number goes; <code>{certain}</code> and <code>{approx}</code> also work anywhere. Any text, symbols and emoji are allowed (emoji need a font in OBS that has them).</p>
+<table>
+  <tr><th>I want&hellip;</th><th>Put this under <code>[display]</code></th></tr>
+  <tr><td>Only the estimated total</td><td><code>show = "approx"</code></td></tr>
+  <tr><td>Only the confirmed chests</td><td><code>show = "certain"</code></td></tr>
+  <tr><td>My own words</td><td><code>approx_text = "Chests opened: {count}"</code></td></tr>
+  <tr><td>A goal</td><td><code>approx_text = "Chest Hunt: {count}/500"</code></td></tr>
+  <tr><td>Word and number on separate lines</td><td><code>approx_text = "CHESTS\n{count}"</code></td></tr>
+  <tr><td>The original text back</td><td>delete the lines you changed (or the whole <code>config.toml</code>)</td></tr>
+</table>
+<div class="note"><b>The counter cannot hide a Text source you already added in OBS.</b> To stop showing a number, hide or delete that source in OBS, or use <code>chest_counter.txt</code> and change <code>show</code>.
+A typo never breaks the counter: it prints a WARNING and uses the default text. Tip: paste your <code>config.toml</code> into an AI assistant and ask it to make the change for you.</div>
+
+<h2 id="window">The counter window (colours and detail)</h2>
+<p><b style="color:#0f7a4a">Green</b> = certain chest &middot; <b style="color:#9a5b00">yellow</b> = counted in APPROX only &middot; <b style="color:#c0392b">red</b> = looked at but not counted &middot; white on red = an error &middot; cyan = status.
+<code>match 0.94</code> is how closely the pop-up word matched (0&ndash;1), not a percentage or probability.</p>
+<table>
+  <tr><th>Under <code>[console]</code></th><th>Effect</th></tr>
+  <tr><td><code>verbosity = "minimal"</code></td><td>only counted chests, warnings and errors</td></tr>
+  <tr><td><code>verbosity = "normal"</code></td><td>default: also rejected pop-ups and a status line every few seconds</td></tr>
+  <tr><td><code>verbosity = "debug"</code></td><td>everything, with the full reason for each decision</td></tr>
+  <tr><td><code>colors = false</code></td><td>plain white text</td></tr>
+</table>
+<p>These settings only change the window; counting and the logs are always the same.</p>
 
 <h2 id="video">Counting a recorded video</h2>
 <p>The counter can also analyse a prerecorded gameplay video (.mp4, .mkv, .mov&hellip;). <b>Drag the video file and drop it onto
