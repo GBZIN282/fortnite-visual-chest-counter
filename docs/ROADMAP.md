@@ -4,7 +4,7 @@
 
 Detector frozen at the `rc1` baselines (`tests/baselines/*_rc1.json`).
 
-## v0.1.1 - presentation (in preparation)
+## v0.1.1 - usability (ready, not yet published)
 
 No detection changes. Notes: [RELEASE_NOTES_v0.1.1.md](RELEASE_NOTES_v0.1.1.md).
 
@@ -12,6 +12,10 @@ No detection changes. Notes: [RELEASE_NOTES_v0.1.1.md](RELEASE_NOTES_v0.1.1.md).
   single `chest_counter.txt` overlay file. v0.1.0 settings and file names keep working.
 - Colour-coded console with `minimal` / `normal` / `debug` verbosity.
 - In-zip guide updated with the other video inputs.
+- `Set Starting Count.bat` (`set-count`): start from the chests already opened (APPROX = total, CERTAIN = 0).
+- Reset / Set Starting Count can no longer be overwritten by a chest counted in the same second.
+- Release runs on the official python.org embeddable Python (signed), no self-built executable; reproducible zip,
+  `runtime/PROVENANCE.txt`.
 
 ## v0.1.2 candidates - video inputs (not implemented yet)
 

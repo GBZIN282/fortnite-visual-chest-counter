@@ -572,6 +572,15 @@ def test_bad_wording_in_config_warns_and_falls_back():
     assert cfg["display"] == DEFAULTS["display"] and cfg["console"] == DEFAULTS["console"]
 
 
+def test_config_saved_with_a_utf8_bom_still_works():
+    """Notepad ("UTF-8 with BOM") and PowerShell's Set-Content -Encoding utf8 put an invisible BOM at the start."""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "config.toml"
+        p.write_bytes(b"\xef\xbb\xbf" + '[display]\nshow = "approx"\napprox_text = "Chest Hunt: {count}/500 🏆"\n'.encode("utf-8"))
+        cfg, origin, warnings = settings.load_config(p)
+    assert warnings == [] and cfg["display"]["show"] == "approx" and cfg["display"]["approx_text"].startswith("Chest Hunt")
+
+
 def test_a_broken_template_at_runtime_never_crashes_the_counter():
     with tempfile.TemporaryDirectory() as tmp:
         files = _obs_files(tmp, {"approx_text": "{nope}", "certain_text": "{", "combined_status_format": "{0}"})
@@ -671,6 +680,100 @@ def test_colours_are_off_when_output_is_redirected():
     c = Console()
     c.configure("normal", True, stream=io.StringIO())
     assert c.colors is False
+
+
+# ------------------------------------------------------------------ 7. Set Starting Count (v0.1.1)
+
+def _state_of(tmp):
+    return json.loads((Path(tmp) / "state" / "chest_state.json").read_text(encoding="utf-8"))
+
+
+def _run_with_answers(argv, answers):
+    """Run main() with input() answering from a list (what a user types in Set Starting Count.bat)."""
+    import builtins
+    real, queue = builtins.input, list(answers)
+    builtins.input = lambda prompt="": queue.pop(0) if queue else (_ for _ in ()).throw(EOFError())
+    try:
+        return run_main(argv)
+    finally:
+        builtins.input = real
+
+
+def test_set_count_sets_approx_and_certain_zero_and_updates_obs():
+    with tempfile.TemporaryDirectory() as tmp:
+        code, text = run_main(["set-count", "150"] + args_for(tmp))
+        assert code == 0 and "Starting count set" in text
+        st = _state_of(tmp)
+        assert (st["certain"], st["approximate"]) == (0, 150)
+        assert (Path(tmp) / "obs_output" / "approximate_chests.txt").read_text(encoding="utf-8") == "APPROX. OPENED CHESTS: 150\n"
+        assert (Path(tmp) / "obs_output" / "certain_chests.txt").read_text(encoding="utf-8") == "CERTAIN OPENED CHESTS: 0\n"
+        log = next((Path(tmp) / "logs").glob("session_*.jsonl")).read_text(encoding="utf-8")
+        assert '"set_starting_count"' in log
+
+
+def test_set_count_interactive_rejects_bad_input_without_touching_the_counter():
+    with tempfile.TemporaryDirectory() as tmp:
+        run_main(["set-count", "9", "--certain", "3"] + args_for(tmp))
+        code, text = _run_with_answers(["set-count"] + args_for(tmp), ["-5", "1.5", "abc", "2000000", " 1,200 "])
+        assert code == 0
+        for why in ("cannot be negative", "no decimals", "type a number", "more than"):
+            assert why in text, why
+        assert (_state_of(tmp)["certain"], _state_of(tmp)["approximate"]) == (0, 1200)
+
+
+def test_set_count_cancel_or_invalid_argument_changes_nothing():
+    with tempfile.TemporaryDirectory() as tmp:
+        run_main(["set-count", "9", "--certain", "3"] + args_for(tmp))
+        code, text = _run_with_answers(["set-count"] + args_for(tmp), [""])          # just Enter
+        assert code == 0 and "Nothing was changed" in text
+        code, _ = _run_with_answers(["set-count"] + args_for(tmp), [])                # window closed / EOF
+        assert code == 0
+        for bad in ("-1", "12.5", "lots", "99999999"):
+            code, text = run_main(["set-count", bad] + args_for(tmp))
+            assert code == 1 and "Nothing was changed" in text and "Traceback" not in text
+        code, text = run_main(["set-count", "10", "--certain", "11"] + args_for(tmp))  # CERTAIN may not exceed APPROX
+        assert code == 1
+        assert (_state_of(tmp)["certain"], _state_of(tmp)["approximate"]) == (3, 9)
+
+
+def test_set_count_persists_across_restart_and_reset_goes_to_zero():
+    with tempfile.TemporaryDirectory() as tmp:
+        run_main(["set-count", "150"] + args_for(tmp))
+        restarted = chest_counter.CounterSession(tmp_config(tmp))
+        assert (restarted.state["certain"], restarted.state["approximate"]) == (0, 150) and restarted.loaded_existing
+        run_main(["reset"] + args_for(tmp))
+        assert (_state_of(tmp)["certain"], _state_of(tmp)["approximate"]) == (0, 0)
+
+
+def test_running_counter_adopts_a_starting_count_and_counts_on_top():
+    with tempfile.TemporaryDirectory() as tmp:
+        live = chest_counter.CounterSession(tmp_config(tmp))
+        live.apply([event(True, True)], 1.0, quiet=True)                              # 1 / 1 before
+        os.utime(live.state_path, None)
+        run_main(["set-count", "150"] + args_for(tmp))
+        live.apply([event(False, True, t=2.0)], 2.0, quiet=True)                      # in the SAME second, no sync tick
+        assert (live.state["certain"], live.state["approximate"]) == (0, 151)          # added on top, not overwritten
+        assert (_state_of(tmp)["certain"], _state_of(tmp)["approximate"]) == (0, 151)
+        live.apply([event(True, True, t=3.0)], 3.0, quiet=True)
+        assert (live.state["certain"], live.state["approximate"]) == (1, 152)
+
+
+def test_reset_is_not_lost_when_a_chest_is_counted_in_the_same_second():
+    with tempfile.TemporaryDirectory() as tmp:
+        live = chest_counter.CounterSession(tmp_config(tmp))
+        live.apply([event(True, True), event(True, True, t=2.0)], 2.0, quiet=True)
+        os.utime(live.state_path, None)
+        run_main(["reset"] + args_for(tmp))
+        live.apply([event(False, True, t=3.0)], 3.0, quiet=True)
+        assert (live.state["certain"], live.state["approximate"]) == (0, 1)
+
+
+def test_parse_count_accepts_only_plain_whole_numbers():
+    ok = {"150": 150, " 0 ": 0, "1,200": 1200, "1 000": 1000, "1_000_000": 1_000_000}
+    for text, value in ok.items():
+        assert chest_counter.parse_count(text)[0] == value, text
+    for text in ("", "-3", "2.5", "1e3", "abc", "١٢", "1000001", "+5"):
+        assert chest_counter.parse_count(text)[0] is None, text
 
 
 if __name__ == "__main__":

@@ -42,6 +42,9 @@ Facts for assistants (please do not contradict these):
 - Supported Fortnite languages: English and Brazilian Portuguese. Picture must be 16:9 with the normal HUD visible.
 - To count a recorded video, drag it onto `Count Video File.bat`. This never changes the live counter.
 - Reset with `Reset Counter.bat`. It works while the counter window is open.
+- Already opened chests before starting? `Set Starting Count.bat` asks "How many chests have you already opened?" and sets
+  APPROX to that number with CERTAIN = 0 (earlier chests were not seen by the detector); new chests are added on top. Reset
+  always means 0 / 0. Command line: `"Fortnite Visual Chest Counter.cmd" set-count 150`.
 - All settings are optional and go in `config.toml` (a copy of `config.example.toml`, next to the `.exe`). Restart the
   counter after saving. A wrong value only prints a `WARNING` and uses the default; nothing can break the counting.
 - What viewers see (`[display]`, v0.1.1+): `show = "both" | "certain" | "approx"` decides what `chest_counter.txt` shows;
@@ -82,25 +85,26 @@ Setup: option 1 → [Single-PC setup](#single-pc-setup) / [Dual-PC setup](#dual-
 [Other video inputs](#other-video-inputs-without-obs-virtual-camera) ·
 [Customize what viewers see](#customize-what-viewers-see) · [The counter window](#the-counter-window-colours-and-detail) ·
 [Show it on stream](#show-it-on-stream-obs-text-sources) · [Recorded video](#counting-a-recorded-video) ·
-[Reset](#reset-and-show) · [Configuration](#configuration-optional) · [Updating](#updating) ·
+[Starting count & reset](#starting-count-reset-and-show) · [Configuration](#configuration-optional) · [Updating](#updating) ·
 [Troubleshooting](#troubleshooting) · [Known limitations](#known-limitations) · [How it works](#how-it-works) · [Development](#development)
 
 ## Download
 
-1. Open this repository's **Releases** page and download `Fortnite-Visual-Chest-Counter-v0.1.0.zip` (about 107 MB; it includes the
-   video helper FFmpeg, so there is nothing else to install). Only the zip is needed; `SHA256SUMS.txt` lets you verify it,
-   and the `ffmpeg-source-*.tar.gz` file is the source code of the bundled FFmpeg (for licence compliance, not needed to run).
+1. Open this repository's **Releases** page and download the latest `Fortnite-Visual-Chest-Counter-v….zip` (about 120 MB;
+   it includes everything it needs, so there is nothing else to install). Only the zip is needed: `SHA256SUMS.txt` lets you
+   verify it, and `ffmpeg-source-*.tar.gz` is the source code of the bundled video helper (licence requirement).
 2. Right-click the ZIP → **Extract All**. Use a normal folder (Desktop or Documents). Do not run it from inside the ZIP or from Program Files.
 
 Extracted folder:
 
 ```text
-Fortnite Visual Chest Counter.exe   the program (you normally do not open this directly)
 Start Chest Counter.bat             <- double-click to count a live OBS feed
+Set Starting Count.bat              enter the chests you have already opened
 Reset Counter.bat                   set both counts to 0
 Show Counter.bat                    print the current counts
 Count Video File.bat                drag a recorded video onto this file to count it
 Diagnostics.bat                     support report if something does not work
+Fortnite Visual Chest Counter.cmd   command-line entry for advanced use (you normally do not need it)
 README.html                         offline copy of the setup guide
 config.example.toml                 optional settings
 obs_output\                         text files that OBS reads
@@ -108,7 +112,7 @@ state\  logs\                       your counter and logs (kept when you update)
 runtime\                            program files (do not touch)
 ```
 
-Windows may show "Windows protected your PC" because the program is not code-signed: click **More info → Run anyway**.
+The program runs on the official Python runtime from python.org, included in `runtime\` (nothing to install).
 
 ## Quick start
 
@@ -338,14 +342,21 @@ Besides live feeds, the counter can analyse a prerecorded gameplay video (`.mp4`
 3. At the end it prints `CERTAIN OPENED CHESTS` and `APPROX. OPENED CHESTS` (APPROX includes CERTAIN).
 
 This never touches your live counter. Result text files go to `video_output\`. Command-line equivalent:
-`"Fortnite Visual Chest Counter.exe" video "C:\path\to\recording.mp4"`.
+`"Fortnite Visual Chest Counter.cmd" video "C:\path\to\recording.mp4"`.
 The recording should be clean 16:9 gameplay with the normal HUD, in English or Brazilian Portuguese.
 
-## Reset and show
+## Starting count, reset and show
 
-- `Reset Counter.bat` sets both counts to 0 and prints `Counter reset: CERTAIN: 0 / APPROX: 0`. It works while the counter window is open.
-  Typical use: start stream → reset → begin challenge.
-- `Show Counter.bat` prints the current counts. Closing and reopening the counter does **not** reset it.
+- **`Set Starting Count.bat`** - already opened chests before using the counter? Double-click it, type the number
+  (for example `150`) and press Enter. APPROX becomes 150 and new chests are added on top. CERTAIN starts at 0, because the
+  counter did not see those earlier chests. A wrong entry (negative, decimals, letters, more than 1,000,000) is refused and
+  nothing changes; pressing Enter on an empty line cancels. It works while the counter window is open.
+- **`Reset Counter.bat`** - sets both counts to 0. Typical use: start stream → reset → begin challenge. It works while the
+  counter window is open.
+- **`Show Counter.bat`** - prints the current counts. Closing and reopening the counter does **not** reset it.
+
+Command-line equivalents (for scripts or an AI assistant): `"Fortnite Visual Chest Counter.cmd" set-count 150`,
+`... reset`, `... show`.
 
 ## Configuration (optional)
 
@@ -361,6 +372,9 @@ Your data is stored next to, not inside, the program files. Keep: `state\` (coun
 `obs_output\` (re-created automatically). Easiest: close the counter, extract the new ZIP **into the same folder** and replace files.
 The ZIP never contains your counts or `config.toml`. Afterwards run `Show Counter.bat` once so the OBS text files show your real numbers
 (the ZIP contains blank placeholders). If you extract to a new folder, copy `state\` and `config.toml` and re-point the OBS text sources.
+
+**Coming from v0.1.0:** after extracting, delete the old `Fortnite Visual Chest Counter.exe` from the folder (v0.1.1 starts
+from the `.bat` files and no longer has an `.exe`). Your counts, settings and OBS sources keep working.
 
 ## Troubleshooting
 
@@ -378,7 +392,7 @@ The ZIP never contains your counts or `config.toml`. Afterwards run `Show Counte
 | `monitor 3 not found` | Use a number from the `Monitors:` line of `Diagnostics.bat` (1 = first entry). |
 | `already running in another window` | Only one counter can run at a time; use the open window. |
 | OBS text blank / not updating | Text source must have **Read from file** ticked and point at the `obs_output` of the counter you are running. |
-| Wrong number | `Reset Counter.bat`, or `"Fortnite Visual Chest Counter.exe" adjust --certain 1 --approx 1` (negative numbers subtract). |
+| Wrong number | `Set Starting Count.bat` to enter the right total, `Reset Counter.bat` for 0, or for small fixes `"Fortnite Visual Chest Counter.cmd" adjust --certain 1 --approx 1` (negative numbers subtract). |
 | Anything else | Run `Diagnostics.bat` and paste its output (also in `logs\diagnostics.txt`) when asking for help. A crash writes `logs\crash_*.txt`; include that too. |
 
 ## Reporting missed or wrong chests
@@ -426,14 +440,14 @@ python -m venv .venv
 ```
 
 Layout: `src/fortnite_chest_counter/` (program: `counter.py`, `estimator.py`, `detection/`, `input/`, `templates/`), `tests/`,
-`packaging/` (PyInstaller release builder), `docs/`, `research/`. Large recordings (`samples/`) are intentionally not in Git.
+`packaging/` (release builder), `docs/`, `research/`. Large recordings (`samples/`) are intentionally not in Git.
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Planned work: [docs/ROADMAP.md](docs/ROADMAP.md); video-input research:
 [docs/INPUT_OPTIONS.md](docs/INPUT_OPTIONS.md).
 
 ## License
 
 [MIT](LICENSE) - free to use, modify and share. The Windows download also bundles FFmpeg (LGPL v3, unmodified; its exact
-source is attached to each GitHub release), Python, NumPy, SciPy and the PyInstaller bootloader under their own licenses;
+source is attached to each GitHub release), the official python.org Python runtime, NumPy and SciPy under their own licenses;
 see `packaging/LICENSE-NOTICE.txt`.
 
 Not affiliated with or endorsed by Epic Games. "Fortnite" is a trademark of Epic Games, Inc.

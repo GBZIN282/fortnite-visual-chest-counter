@@ -17,7 +17,7 @@ src/fortnite_chest_counter/
                     that the live path imports only for constants.
   input/            video_sources.py: OBS Virtual Camera / capture device / desktop / file via ffmpeg
   templates/        runtime detector templates (.npy) - tracked in Git, REQUIRED at runtime
-packaging/          build_release.py (PyInstaller + bundled ffmpeg + zip), launchers/*.bat, README.html, notices
+packaging/          build_release.py (embeddable Python + verified numpy/scipy + bundled ffmpeg + zip), README.html, notices
 tests/              test_basics.py, test_release.py (no video needed)
 research/           offline experiment scripts (not shipped)
 docs/               this file + the research log
@@ -57,12 +57,32 @@ during packaging or refactoring work.**
 ## Releasing
 
 ```text
-python -m venv build-venv && build-venv\Scripts\pip install numpy scipy pyinstaller
-build-venv\Scripts\python packaging\build_release.py --ffmpeg-zip <ffmpeg-win64-lgpl.zip> --ffmpeg-source <ffmpeg-source-COMMIT.tar.gz>
+python -m venv build-venv && build-venv\Scripts\pip install numpy scipy
+build-venv\Scripts\python packaging\build_release.py --python-embed python-3.13.17-embed-amd64.zip ^
+    --ffmpeg-zip <ffmpeg-win64-lgpl.zip> --ffmpeg-source <ffmpeg-source-COMMIT.tar.gz> --out build_out\vX.Y.Z
 ```
 
-Output: `build_out/Fortnite-Visual-Chest-Counter-v0.1.0/` and `.zip`. The build runs a **release audit** that fails if samples, analysis
-output, bytecode, logs, a saved counter or non-zero OBS files would be shipped. Bump the version only in `version.py`.
+The Windows release contains **no self-built executable** (since v0.1.1). The `.bat` launchers run
+`runtime\python\python.exe -m fortnite_chest_counter <command>`:
+
+* `runtime/python/` - the official python.org *embeddable* distribution of the **same 3.x as the build venv**, unmodified
+  except one line (`..\lib`) appended to `python3xx._pth`. Download it with its `.asc` and verify it with Steve Dower's
+  Windows release key (fingerprint `7ED1 0B65 31D7 C8E1 BC29 6021 FC62 4643 4870 34E5`, published on python.org).
+  The build refuses to continue unless every `.exe/.dll/.pyd` has a valid Authenticode signature (Python Software Foundation
+  / Microsoft).
+* `runtime/lib/` - our package (only the 5 runtime templates) + numpy + scipy copied from the build venv. Every file is checked
+  against its wheel's `RECORD` hash first; `tests` folders are left out; everything is precompiled (`unchecked-hash` pycs).
+* `runtime/ffmpeg/` - unmodified LGPL FFmpeg; the build reads its id from the binary and checks it against the source archive.
+* `runtime/PROVENANCE.txt` - versions, hashes and signers of all of the above.
+* Zip entries are sorted and use a fixed timestamp, so the same inputs give a byte-identical zip. `SHA256SUMS.txt` covers the
+  zip and the FFmpeg source archive.
+
+v0.1.0 was built with PyInstaller (see git history). Since v0.1.1 the release ships the signed official runtime instead of
+an unsigned, self-built launcher executable. Release checklist: scan the final zip and folder with
+`MpCmdRun -Scan -ScanType 3 -File <path> -DisableRemediation`, then run the packaged app from a fresh extraction.
+
+The build runs a **release audit** that fails on samples, analysis output, logs, a saved counter, non-zero OBS files or any
+executable other than the official `python.exe`/`pythonw.exe` and `ffmpeg.exe`. Bump the version only in `version.py`.
 `packaging/README.html` (shipped in the zip) and the top-level `README.md` (GitHub) are separate files; keep them consistent.
 
 ### What ships
@@ -99,14 +119,11 @@ output, bytecode, logs, a saved counter or non-zero OBS files would be shipped. 
   The console's QuickEdit mode is disabled in `live` (a click would pause the process and stall counting).
 * **Launchers call the exe by full path** (`"%~dp0..."`). Never rely on the current directory: some systems set
   `NoDefaultCurrentDirectoryInExePath`.
-* **Bundled FFmpeg:** `runtime/ffmpeg/ffmpeg.exe`, prepended to `PATH` at startup. We ship an **LGPL v3** build (no GPL parts) run as a
+* **Bundled FFmpeg:** `runtime/ffmpeg/ffmpeg.exe`, found by `paths.bundled_ffmpeg_dir()` and prepended to `PATH` at startup. We ship an **LGPL v3** build (no GPL parts) run as a
   separate process, with its licence and `FFMPEG-NOTICE.txt`. Do not ship a `--enable-gpl` build unless you also offer the complete
   corresponding source. Pin the archive you ship (its SHA-256 is written into the notice).
 * **Licences:** the project is MIT (`LICENSE`). The build copies the Python (PSF), NumPy and SciPy (BSD, incl. their bundled
-  OpenBLAS/LAPACK/gfortran notices) and PyInstaller (GPL + bootloader exception) texts into `runtime/licenses/`. For FFmpeg the
-  build reads the exact build id from the binary (no need to run it), checks it against the source archive, and writes both
-  into `FFMPEG-NOTICE.txt`. Attach the zip, `SHA256SUMS.txt` and `ffmpeg-source-<commit>.tar.gz` to the GitHub release
-  (LGPL v3: the corresponding source is offered next to the binary). The FFmpeg source for a build:
-  `https://github.com/FFmpeg/FFmpeg/archive/<commit>.tar.gz`.
-* **Unsigned exe:** SmartScreen / antivirus may warn; the README covers it. Code signing is the real fix.
-* **Module names:** avoid naming a module `sources` (PyInstaller flagged it).
+  OpenBLAS/LAPACK/gfortran notices) licence texts into `runtime/licenses/`. Attach the zip, `SHA256SUMS.txt` and
+  `ffmpeg-source-<commit>.tar.gz` to the GitHub release (LGPL v3: the corresponding source is offered next to the binary).
+  The FFmpeg source for a build: `https://github.com/FFmpeg/FFmpeg/archive/<commit>.tar.gz`.
+* **Module names:** avoid naming a module `sources` (it clashed with packaging tools in the past).

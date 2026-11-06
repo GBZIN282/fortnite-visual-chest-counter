@@ -2,9 +2,9 @@
 Where things live, for both `python -m fortnite_chest_counter` (development) and the packaged .exe.
 
   APP_DIR       the folder the user sees: config.toml, state/, logs/, obs_output/ live here.
-                (packaged: the folder holding "Fortnite Visual Chest Counter.exe"; dev: this source folder)
+                (release: the folder holding the .bat launchers; dev: the current folder or FCC_HOME)
   RESOURCE_DIR  read-only files shipped with the program: templates/, ffmpeg/.
-                (packaged: PyInstaller's bundle folder, "runtime/"; dev: this source folder)
+                (release: runtime/lib/fortnite_chest_counter; dev: this source folder)
 
 User data (APP_DIR) and program files (RESOURCE_DIR) are deliberately separate so an update can
 replace the program without touching the user's counts or settings.
@@ -27,6 +27,11 @@ else:
 
 TEMPLATES_DIR = RESOURCE_DIR / "templates"
 
+# The Windows release runs the official python.org embeddable Python shipped in runtime\python\ (signed by the Python
+# Software Foundation), launched by the .bat files from the app folder.
+EMBEDDED_RUNTIME = APP_DIR / "runtime" / "python"
+PACKAGED = FROZEN or Path(sys.executable).resolve().parent == EMBEDDED_RUNTIME.resolve()
+
 # Template files the live counter cannot run without.
 REQUIRED_TEMPLATES = [
     TEMPLATES_DIR / "chest" / "en" / "chest.npy",
@@ -39,7 +44,7 @@ REQUIRED_TEMPLATES = [
 
 def bundled_ffmpeg_dir():
     """Folder holding the ffmpeg.exe shipped with the app, or None."""
-    for candidate in (RESOURCE_DIR / "ffmpeg", APP_DIR / "ffmpeg"):
+    for candidate in (RESOURCE_DIR / "ffmpeg", APP_DIR / "runtime" / "ffmpeg", APP_DIR / "ffmpeg"):
         if (candidate / "ffmpeg.exe").exists():
             return candidate
     return None

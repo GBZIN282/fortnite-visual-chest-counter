@@ -8,17 +8,17 @@ It is an independent fan-made tool. It is not made by, affiliated with or endors
 trademark of Epic Games, Inc. The program only looks at video frames you give it (passively); it does not read or modify
 the game, its memory, the network traffic or your account.
 
-Bundled third-party components (all inside the "runtime" folder; their license texts are in runtime\licenses\ and
-runtime\ffmpeg\):
+Bundled third-party components (all inside the "runtime" folder; where each one comes from, with checksums, is listed in
+runtime\PROVENANCE.txt):
 
   Component                  License                                          License text
   -------------------------  -----------------------------------------------  -----------------------------------------
-  FFmpeg (ffmpeg.exe)        LGPL v3 (unmodified LGPL build, no GPL parts)    runtime\ffmpeg\LICENSE.txt, FFMPEG-NOTICE.txt
-  Python runtime             PSF License                                      runtime\licenses\Python-LICENSE.txt
+  Python 3.13 (official      PSF License                                      runtime\licenses\Python-LICENSE.txt
+  python.org embeddable
+  distribution, unmodified)
   NumPy (+ OpenBLAS, LAPACK) BSD 3-Clause (+ bundled library licenses)        runtime\licenses\NumPy-LICENSE.txt
   SciPy (+ bundled libs)     BSD 3-Clause (+ bundled library licenses)        runtime\licenses\SciPy-LICENSE.txt
-  PyInstaller bootloader     GPL v2 with the PyInstaller bootloader exception runtime\licenses\PyInstaller-COPYING.txt
-                             (allows bundling in programs under any license)
+  FFmpeg (ffmpeg.exe)        LGPL v3 (unmodified LGPL build, no GPL parts)    runtime\ffmpeg\LICENSE.txt, FFMPEG-NOTICE.txt
 
 FFmpeg is run as a separate program; Fortnite Visual Chest Counter does not link against it. Where to get the FFmpeg
 source code for the bundled build is explained in runtime\ffmpeg\FFMPEG-NOTICE.txt.

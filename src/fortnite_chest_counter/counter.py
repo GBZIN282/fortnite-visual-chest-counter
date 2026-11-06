@@ -4,7 +4,7 @@ simulation on a recorded video, and the LIVE mode for OBS / capture card / deskt
 
     frame source  ->  estimator.ChestEstimator  ->  counter state  ->  OBS text files + log
 
-Packaged app: "Fortnite Visual Chest Counter.exe" with no arguments = `live` (see the .bat launchers).
+Windows release: the .bat launchers run the bundled official Python: runtime/python/python.exe -m fortnite_chest_counter <command>.
 Developers: the same commands via `python -m fortnite_chest_counter ...`.
 
 Commands
@@ -272,6 +272,11 @@ class CounterSession:
     def apply(self, finished, now_t, quiet=False):
         """Count and log finished estimator events; refresh files when a count changed."""
         applied = []
+        # Reset / Set Starting Count may have rewritten the counter file a moment ago (they run as separate programs).
+        # Adopt that BEFORE counting, so a chest found in the same second is added on top instead of overwriting it.
+        if finished and self.sync_external_changes() and not quiet:
+            CONSOLE.info(f"Counter changed by Reset / Set Starting Count -> CERTAIN {self.fmt(self.state['certain'])} | "
+                         f"APPROX {self.fmt(self.state['approximate'])}")
         for ev in finished:
             st = self.state
             st["events_logged"] += 1
@@ -811,7 +816,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
             if now_m - last_sync >= 1.0:
                 last_sync = now_m
                 if session.sync_external_changes():
-                    CONSOLE.info(f"Counter changed by Reset/Adjust -> CERTAIN {session.fmt(state['certain'])} | "
+                    CONSOLE.info(f"Counter changed by Reset / Set Starting Count -> CERTAIN {session.fmt(state['certain'])} | "
                                  f"APPROX {session.fmt(state['approximate'])}")
             if now_m - last_status >= interval:
                 span = now_m - last_status
@@ -946,6 +951,72 @@ def cmd_adjust(args):
     show_counts(session)
 
 
+MAX_STARTING_COUNT = 1_000_000
+
+
+def parse_count(text):
+    """'150', '1,200', ' 75 ' -> int. Negative, decimal, empty, non-numeric or > MAX_STARTING_COUNT -> (None, why)."""
+    raw = str(text).strip()
+    cleaned = raw.replace(",", "").replace("_", "").replace(" ", "")
+    if not cleaned:
+        return None, "nothing was typed"
+    if cleaned.startswith("-"):
+        return None, "it cannot be negative"
+    if "." in cleaned:
+        return None, "please type a whole number (no decimals)"
+    if not (cleaned.isascii() and cleaned.isdigit()):
+        return None, "please type a number, like 150"
+    value = int(cleaned)
+    if value > MAX_STARTING_COUNT:
+        return None, f"that is more than {MAX_STARTING_COUNT:,}; please check the number"
+    return value, ""
+
+
+def cmd_set_count(args):
+    """Start from the chests a streamer already opened: APPROX = that total, CERTAIN = 0 (the detector did not see them).
+    Same save path as reset/adjust, so a running counter picks it up through its normal file sync."""
+    banner()
+    cfg, _ = make_config(args)
+    preflight(cfg, needs_video=False)
+    session = CounterSession(cfg)
+    st = session.state
+    CONSOLE.line(f"\nCurrent counter: CERTAIN {session.fmt(st['certain'])} | APPROX {session.fmt(st['approximate'])}")
+    if args.count is not None:
+        total, why = parse_count(args.count)
+        if total is None:
+            raise UserError(f"'{args.count}' is not a valid number of chests: {why}. Nothing was changed.")
+    else:
+        CONSOLE.line("Type the number of chests you have already opened and press Enter (just Enter = cancel).")
+        while True:
+            try:
+                answer = input("How many chests have you already opened? ")
+            except (EOFError, KeyboardInterrupt):
+                answer = ""
+            if not answer.strip():
+                CONSOLE.line("\nNothing was changed.")
+                return
+            total, why = parse_count(answer)
+            if total is not None:
+                break
+            CONSOLE.warn(f"'{answer.strip()}' was not accepted: {why}. Nothing was changed - try again.")
+    certain = args.certain
+    if certain < 0 or certain > total:
+        raise UserError(f"--certain must be between 0 and {total:,} (CERTAIN is part of APPROX). Nothing was changed.")
+    previous = {"certain": st["certain"], "approximate": st["approximate"]}
+    st["certain"], st["approximate"] = certain, total
+    st["events_logged"] += 1
+    session.save()
+    session.write_obs()
+    session.log.write({"event_id": f"E{st['events_logged']:04d}", "source": "manual", "action": "set_starting_count",
+                       "previous": previous, "counts_after": {"certain": certain, "approximate": total}, "logged_at": now_iso()})
+    CONSOLE.line("\nStarting count set:", "bold")
+    show_counts(session)
+    CONSOLE.line(f"\nNew chests are added on top of {session.fmt(total)}. (CERTAIN starts at {session.fmt(certain)}: "
+                 "chests opened before the counter ran were not seen by it.)")
+    if counter_is_running(cfg["state"]["path"]):
+        CONSOLE.info("The counter window is open: it picks up the new numbers within a second.")
+
+
 def short_path(path):
     """Paths in support reports: hide the Windows user name."""
     text = str(path)
@@ -964,7 +1035,7 @@ def cmd_diagnostics(args):
         print(text)
 
     out(f"=== {APP_NAME} diagnostics ===")
-    out(f"App version:      {__version__} ({RELEASE_CHANNEL}), {'packaged' if paths.FROZEN else 'running from source'}")
+    out(f"App version:      {__version__} ({RELEASE_CHANNEL}), {'packaged' if paths.PACKAGED else 'running from source'}")
     out(f"Windows:          {platform.platform()}")
     out(f"Program folder:   {short_path(paths.APP_DIR)}")
     cfg, origin, warnings = settings.load_config(getattr(args, "config", None))
@@ -1108,6 +1179,11 @@ def build_parser():
     p.add_argument("--json", action="store_true", help="also print the raw saved state")
     p.set_defaults(func=cmd_show)
     sub.add_parser("reset", parents=[common], help="set both counts to 0").set_defaults(func=cmd_reset)
+    p = sub.add_parser("set-count", parents=[common],
+                       help="start from the chests you already opened (sets APPROX; CERTAIN starts at 0)")
+    p.add_argument("count", nargs="?", help="chests already opened (asked for if left out)")
+    p.add_argument("--certain", type=int, default=0, help="advanced: also set CERTAIN (must not exceed the count)")
+    p.set_defaults(func=cmd_set_count)
     p = sub.add_parser("adjust", parents=[common], help="manually correct the counts")
     p.add_argument("--certain", type=int, default=0)
     p.add_argument("--approx", type=int, default=0)

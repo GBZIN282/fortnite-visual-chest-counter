@@ -132,7 +132,7 @@ def load_config(path=None, overrides=None):
 
     if path.exists():
         try:
-            data = tomllib.loads(path.read_text(encoding="utf-8"))
+            data = tomllib.loads(path.read_text(encoding="utf-8-sig"))   # utf-8-sig: Notepad/PowerShell may add a BOM
             origin = str(path)
         except (tomllib.TOMLDecodeError, UnicodeDecodeError, OSError) as error:
             warnings.append(f"{path}: cannot be read ({error}); using ALL built-in defaults")

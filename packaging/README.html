@@ -72,6 +72,7 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
   <li><a href="#custom">Customize text</a></li>
   <li><a href="#window">Counter window</a></li>
   <li><a href="#video">Recorded video</a></li>
+  <li><a href="#start">Starting count</a></li>
   <li><a href="#reset">Reset</a></li>
   <li><a href="#settings">Settings</a></li>
   <li><a href="#update">Updating</a></li>
@@ -102,17 +103,18 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
 <h3>1. Unzip</h3>
 <p>Right-click the zip &rarr; <b>Extract All</b>. Do <b>not</b> run it from inside the zip, and don&rsquo;t put it in <i>Program Files</i>.
 The folder contains:</p>
-<pre>Fortnite Visual Chest Counter.exe (the program; you normally don't open this directly)
-Start Chest Counter.bat        &lt;- the one you double-click
+<pre>Start Chest Counter.bat        &lt;- the one you double-click
+Set Starting Count.bat         enter the chests you have already opened
 Reset Counter.bat              set both counts to 0
 Show Counter.bat               look at the current counts
 Count Video File.bat           drag a recorded video onto this file to count it
 Diagnostics.bat                for support, if something does not work
+Fortnite Visual Chest Counter.cmd   command-line entry for advanced use
 README.html                    this guide
 config.example.toml            optional settings (see "Settings")
 obs_output\                    the text files OBS reads
 state\  logs\                  your counter and logs (kept when you update)
-runtime\                       program files - don't touch</pre>
+runtime\                       program files (the official Python runtime from python.org, FFmpeg) - don't touch</pre>
 
 <h3>2. Make a clean feed for the counter in OBS</h3>
 <p>The counter must see <b>only the game picture</b> (no webcam, alerts or overlays covering the screen). The easiest way is a separate scene that you never show on stream.</p>
@@ -226,6 +228,14 @@ A typo never breaks the counter: it prints a WARNING and uses the default text. 
 and finishes with the CERTAIN and APPROX numbers (APPROX includes CERTAIN). This <b>never changes your live counter</b>; result text files go to
 <code>video_output\</code>. The video should be clean 16:9 gameplay with the normal HUD, in English or Brazilian Portuguese.</p>
 
+<h2 id="start">Already opened chests? Set a starting count</h2>
+<p>Double-click <b>Set Starting Count.bat</b>, type how many chests you have already opened (for example <code>150</code>) and press Enter.</p>
+<pre>Starting count set:
+  CERTAIN OPENED CHESTS: 0
+  APPROX. OPENED CHESTS: 150</pre>
+<p>APPROX starts at your number and new chests are added on top. CERTAIN starts at 0, because the counter did not see the earlier chests.
+A wrong entry (negative, decimals, letters, more than 1,000,000) is refused and nothing changes; an empty Enter cancels. It works while the counter window is open.</p>
+
 <h2 id="reset">Reset the counter (e.g. at the start of a stream)</h2>
 <p>Double-click <b>Reset Counter.bat</b>. It prints</p>
 <pre>Counter reset:
@@ -261,18 +271,18 @@ A mistake in the file only produces a warning and the default is used for that o
 <p><b>Easiest update:</b> close the counter, then extract the new zip <b>into the same folder</b> and choose &ldquo;Replace the files&rdquo;. The zip never contains your counts or <code>config.toml</code>, so they are untouched.
 Afterwards double-click <b>Show Counter.bat</b> once so the OBS text files show your real numbers again (the zip contains blank placeholders).
 If you extract to a new folder instead, copy <code>state\</code> and <code>config.toml</code> across, and re-point the two OBS text sources to the new <code>obs_output</code> folder.</p>
+<p><b>Coming from v0.1.0:</b> after extracting, delete the old <code>Fortnite Visual Chest Counter.exe</code> from the folder (v0.1.1 starts from the .bat files and has no .exe). Your counts, settings and OBS sources keep working.</p>
 
 <h2 id="help">Troubleshooting</h2>
 <table>
   <tr><th>Problem</th><th>Fix</th></tr>
   <tr><td>&ldquo;OBS Virtual Camera was not found&rdquo;</td><td>Open OBS Studio (version 28+) and click <b>Start Virtual Camera</b>, then start the counter again.</td></tr>
   <tr><td>&ldquo;exists but is not sending video&rdquo;</td><td>Click <b>Start Virtual Camera</b> again; check the ChestDetectorFeed scene actually shows the game (not black).</td></tr>
-  <tr><td>Windows says &ldquo;Windows protected your PC&rdquo;</td><td>The program is not code-signed (it&rsquo;s a free hobby tool). Click <b>More info</b> &rarr; <b>Run anyway</b>. If your antivirus quarantines the .exe, add the folder as an exception.</td></tr>
   <tr><td>The number never changes</td><td>Is the picture 16:9 and the HUD visible? Does the chest popup (&ldquo;CHEST&rdquo; / &ldquo;BA&Uacute;&rdquo;) appear in ChestDetectorFeed? Webcam/alerts covering the HUD hide it. Run <b>Diagnostics.bat</b>.</td></tr>
   <tr><td>&ldquo;already running in another window&rdquo;</td><td>Only one counter can run at a time. Use the window that is already open.</td></tr>
   <tr><td>It missed a chest / counted something wrong</td><td>Help improve it: in <code>config.toml</code> set <code>save_snapshots = true</code> under <code>[logging]</code>. Each pop-up the counter considered is then saved as a small picture in <code>logs\snapshots\</code> (only the pop-up area, nothing else). Send the pictures of the misses with the session log from <code>logs\</code>.</td></tr>
   <tr><td>Text in OBS is blank or not updating</td><td>In the Text source tick <b>Read from file</b> and check it points to the <code>obs_output</code> folder of the counter you are running.</td></tr>
-  <tr><td>Wrong numbers / want to fix by hand</td><td>Run the counter folder&rsquo;s <code>Fortnite Visual Chest Counter.exe adjust --certain 1 --approx 1</code> from a command window (use negative numbers to subtract), or Reset.</td></tr>
+  <tr><td>Wrong numbers / want to fix by hand</td><td>Use <b>Set Starting Count.bat</b> to enter the right total, or <b>Reset Counter.bat</b> for 0.</td></tr>
   <tr><td>Anything else</td><td>Double-click <b>Diagnostics.bat</b>, then copy its output (also saved to <code>logs\diagnostics.txt</code>) into your message. If the program ever crashes it saves <code>logs\crash_*.txt</code> &mdash; send that too.</td></tr>
 </table>
 
