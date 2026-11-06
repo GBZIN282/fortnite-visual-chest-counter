@@ -41,10 +41,34 @@ Facts for assistants (please do not contradict these):
 - Supported Fortnite languages: English and Brazilian Portuguese. Picture must be 16:9 with the normal HUD visible.
 - To count a recorded video, drag it onto `Count Video File.bat`. This never changes the live counter.
 - Reset with `Reset Counter.bat`. It works while the counter window is open.
+- OBS Virtual Camera is the default, **not** the only option. If the user's Virtual Camera is already used for something else,
+  use the [other video inputs](#other-video-inputs-without-obs-virtual-camera): an OBS fullscreen projector on a second
+  monitor (`source = "desktop"`) or the capture card directly (`source = "device"`). Both are set in `config.toml`; v0.1.0 has
+  no source picker. Direct capture-card mode has not yet been tested with physical capture hardware.
+
+## Choose your video input
+
+The counter needs to *see* your gameplay. Pick the first option that fits you:
+
+| | Option | Best for | Needs | Status in v0.1.0 |
+|---|---|---|---|---|
+| 1 | **OBS Virtual Camera** (default) | most OBS users, single PC or capture card | OBS 28+, Virtual Camera free to use | tested, recommended |
+| 2 | **OBS projector on a second monitor** | your Virtual Camera is already used for something else | a spare 16:9 monitor | uses the tested desktop mode; projector setup not yet tested |
+| 3 | **Capture card directly** | dual-PC setups where OBS does not need the card at the same time | your capture card | advanced, not yet tested on real cards |
+| 4 | **Recorded video** | counting chests in a video file afterwards | the video file | tested |
+
+- Options 1 and 2 never open your capture card a second time, so they cannot disturb OBS.
+- Option 3 can conflict with OBS: many capture cards work with only **one** program at a time.
+- Options 2 and 3 are switched on by editing one small settings file (steps below). A one-click source picker is planned
+  for the next version.
+
+Setup: option 1 → [Single-PC setup](#single-pc-setup) / [Dual-PC setup](#dual-pc-setup) · options 2 and 3 →
+[Other video inputs](#other-video-inputs-without-obs-virtual-camera) · option 4 → [Recorded video](#counting-a-recorded-video).
 
 ## Contents
 
 [Download](#download) · [Quick start](#quick-start) · [Single-PC setup](#single-pc-setup) · [Dual-PC setup](#dual-pc-setup) ·
+[Other video inputs](#other-video-inputs-without-obs-virtual-camera) ·
 [Show it on stream](#show-it-on-stream-obs-text-sources) · [Recorded video](#counting-a-recorded-video) ·
 [Reset](#reset-and-show) · [Configuration](#configuration-optional) · [Updating](#updating) ·
 [Troubleshooting](#troubleshooting) · [Known limitations](#known-limitations) · [How it works](#how-it-works) · [Development](#development)
@@ -153,9 +177,71 @@ Streaming PC -> OBS -> scene "ChestDetectorFeed" -> Virtual Camera -> Fortnite V
 3. Set Virtual Camera to **Scene → ChestDetectorFeed** and click **Start Virtual Camera** (same as Single-PC Step 2).
 4. Double-click `Start Chest Counter.bat` (same launcher as everyone else).
 
-**Advanced: direct capture-card mode.** Copy `config.example.toml` to `config.toml`, and under `[live]` set `source = "device"` and
-`device = "exact device name"` (run `Diagnostics.bat` to list names). Many capture cards can be opened by only **one** program at a time,
-so this usually fails while OBS is using the card; if it does, use the Virtual Camera method.
+Is your Virtual Camera already used for something else, or do you want the counter to read the card without OBS? See
+[Other video inputs](#other-video-inputs-without-obs-virtual-camera).
+
+## Other video inputs (without OBS Virtual Camera)
+
+Both options below are chosen in a small settings file, `config.toml`. Creating it takes a minute:
+
+1. In the counter folder, copy `config.example.toml` and rename the copy to **`config.toml`**.
+   (If Windows hides file extensions, the copy may show as `config.example - Copy`; rename it to `config` and check it is a
+   "TOML file".)
+2. Open `config.toml` with **Notepad**. Near the bottom, find the `[live]` section.
+3. Change the lines shown below, save, and start the counter with `Start Chest Counter.bat` as usual.
+
+The counter prints what it connected to (for example `Connected: video 1920x1080 @ 30.0 fps`), so you can see at once
+whether it worked. To go back to the Virtual Camera, set `source = "obs-camera"` again (or delete `config.toml`).
+
+### Option 2: OBS projector on a second monitor
+
+Uses the gameplay OBS already shows. OBS keeps the capture card and the Virtual Camera; nothing is opened twice.
+
+1. In OBS, in the **Sources** list of your stream scene, right-click your **gameplay source** (Game Capture or Video Capture
+   Device) → **Fullscreen Projector (Source)** → choose your second monitor. That monitor now shows only the gameplay.
+2. Run `Diagnostics.bat`. The `Monitors:` line lists your monitors in the counter's order, e.g. `2560x1440, 1920x1080`:
+   the first one is monitor `1`, the second is `2`.
+3. In `config.toml`, under `[live]`:
+
+   ```toml
+   [live]
+   source = "desktop"
+   monitor = 2
+   ```
+
+- Use a **16:9 monitor** (1920x1080, 2560x1440, ...). An ultrawide monitor would squash the picture.
+- The counter reads exactly what that monitor shows: keep other windows and notifications off it. The mouse pointer is ignored.
+- Close the projector with `Esc` (or right-click → Close) when you are done.
+
+### Option 3: Capture card directly
+
+The counter opens the capture card itself, without OBS. **Not yet tested with physical capture cards** - please report how it
+works with yours.
+
+1. Connect the card and check that Windows recognises it (for example it appears in the Windows Camera app or in OBS).
+2. **Close OBS, or remove the card from OBS** (see the warning below).
+3. Run `Diagnostics.bat`. The `Video devices:` line lists the device names, e.g. `OBS Virtual Camera, Elgato HD60 X`.
+   It is also saved in `logs\diagnostics.txt`: **copy the name from there** rather than typing it (some names contain
+   look-alike letters).
+4. In `config.toml`, under `[live]`:
+
+   ```toml
+   [live]
+   source = "device"
+   device = "Elgato HD60 X"
+   ```
+
+   Replace `Elgato HD60 X` with your exact device name, keeping the quotes.
+
+Good to know:
+
+- **OBS and the counter usually cannot use the same capture card at the same time.** Whether a card can be shared depends on
+  the card and its driver. If OBS already uses the card, the counter reports `Could not open the video device`; if the counter
+  opened it first, OBS may show a black picture. If you need the card in OBS while streaming, use option 1 or 2 instead.
+- The counter uses the card's **default resolution and frame rate**; v0.1.0 cannot choose them. If it reports a resolution
+  below 1280x720 (`WARNING: the video is only ...`), detection may be weaker; option 1 or 2 avoids this because OBS sets the
+  resolution.
+- Two identical cards show the same name and cannot be told apart yet.
 
 ## Show it on stream (OBS Text sources)
 
@@ -214,6 +300,13 @@ The ZIP never contains your counts or `config.toml`. Afterwards run `Show Counte
 | `OBS Virtual Camera was not found` | Open OBS Studio 28+, click **Start Virtual Camera**, start the counter again. |
 | `exists but is not sending video` | Click **Start Virtual Camera** again; check `ChestDetectorFeed` is not black. |
 | Number never changes | Is the picture 16:9 with the HUD visible, and does the chest pop-up ("CHEST" / "BAÚ") appear in `ChestDetectorFeed`? Overlays hiding the HUD break detection. Run `Diagnostics.bat`. |
+| My Virtual Camera is already used by something else | Use the [OBS projector on a second monitor](#option-2-obs-projector-on-a-second-monitor) or the [capture card directly](#option-3-capture-card-directly). |
+| `Could not open the video device` (capture card mode) | The name must match `Diagnostics.bat` exactly (copy it from `logs\diagnostics.txt`). Most often the card is **in use by OBS**: close OBS or remove the card from it, or use option 1 or 2. Also check the card is plugged in and shows a picture in the Windows Camera app. |
+| Capture card is missing from `Video devices:` | Reconnect it, install the maker's driver if it needs one, restart the PC, and run `Diagnostics.bat` again. |
+| OBS shows a black picture from the card while the counter runs | The counter has the card. Stop the counter, or switch the counter to option 1 or 2 so only OBS opens the card. |
+| `WARNING: the video is only 960x540` (or another size below 1280x720) | The capture card's default mode is low; v0.1.0 cannot change it. Use option 1 or 2, where OBS sets the resolution. |
+| `WARNING: ... not 16:9` | The picture is the wrong shape (e.g. an ultrawide monitor in option 2). Use a 16:9 monitor or scene. |
+| `monitor 3 not found` | Use a number from the `Monitors:` line of `Diagnostics.bat` (1 = first entry). |
 | `already running in another window` | Only one counter can run at a time; use the open window. |
 | OBS text blank / not updating | Text source must have **Read from file** ticked and point at the `obs_output` of the counter you are running. |
 | Wrong number | `Reset Counter.bat`, or `"Fortnite Visual Chest Counter.exe" adjust --certain 1 --approx 1` (negative numbers subtract). |
@@ -238,7 +331,9 @@ Snapshots only contain the pop-up area to the right of the crosshair, not your w
 - **HUD layout/scale:** assumes the normal HUD at a 16:9 picture. Moved/scaled/hidden HUD or 4:3 / vertical video will not work well.
 - **Clean gameplay feed recommended:** overlays on top of the HUD can hide the clues.
 - **Audio is not used** by the live estimator; only the picture is analysed.
-- Tested on a limited set of recordings (PC English, PS5 Portuguese, plus a ~20-minute live OBS session). Windows only.
+- Tested on a limited set of recordings (PC English, PS5 Portuguese) plus several hours of live Twitch/OBS sessions. Windows only.
+- **Video inputs:** no source picker yet (options 2 and 3 are set in `config.toml`); direct capture-card mode is untested on
+  physical cards, uses the card's default resolution, and may not work while OBS uses the same card.
 
 ## How it works
 
@@ -263,7 +358,8 @@ python -m venv .venv
 
 Layout: `src/fortnite_chest_counter/` (program: `counter.py`, `estimator.py`, `detection/`, `input/`, `templates/`), `tests/`,
 `packaging/` (PyInstaller release builder), `docs/`, `research/`. Large recordings (`samples/`) are intentionally not in Git.
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Planned work: [docs/ROADMAP.md](docs/ROADMAP.md); video-input research:
+[docs/INPUT_OPTIONS.md](docs/INPUT_OPTIONS.md).
 
 ## License
 
