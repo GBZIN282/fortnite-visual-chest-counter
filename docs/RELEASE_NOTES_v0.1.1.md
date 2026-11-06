@@ -17,8 +17,9 @@ chests. Works while the counter is running. Wrong entries are refused without ch
 ### New: customize what viewers see
 
 - **One OBS source, one file:** add a Text (GDI+) source reading `obs_output\chest_counter.txt`.
-- **`Configure Counter.bat`:** choose *Estimated total only*, *Confirmed chests only* or *Both*, then type your own words
-  with `#` where the number goes (e.g. `Chest Hunt: #/500`). OBS updates instantly, even while the counter is running.
+- **`Configure Counter.bat`:** choose *Estimated total only*, *Confirmed chests only*, *Both on one line* or *Both on two
+  lines*, type your own words (`#` = the number, e.g. `Chest Hunt: #/500`), check the preview and press Enter. OBS updates
+  instantly, even while the counter is running - and it always reads the same file, so you never touch the OBS source again.
 - When the counter starts, it shows exactly what viewers see and which file OBS should read.
 - Any text, symbols and emoji. A typo never breaks the counter.
 - Your existing OBS sources keep working: file names did not change, and v0.1.0 settings still apply. Advanced users can

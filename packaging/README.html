@@ -189,23 +189,27 @@ To try: make a copy of <code>config.example.toml</code> named <code>config.toml<
 
 <h2 id="custom">Customize what viewers see</h2>
 <p>Double-click <b>Configure Counter.bat</b> and answer two questions:</p>
-<pre>What should your viewers see?
-  1) Estimated total only    e.g. APPROX. OPENED CHESTS: 231
-  2) Confirmed chests only   e.g. CERTAIN OPENED CHESTS: 20
-  3) Both numbers (two lines)
-Type 1, 2 or 3 and press Enter: 1
+<pre>What should OBS show?   (OBS always reads obs_output\chest_counter.txt - you never change that)
+  1) estimated total only        e.g. APPROX. OPENED CHESTS: 231
+  2) confirmed chests only       e.g. CERTAIN OPENED CHESTS: 20
+  3) both numbers on one line    e.g. 20 certain • ~231 estimated
+  4) both numbers on two lines   e.g. CERTAIN OPENED CHESTS: 20  /  APPROX. OPENED CHESTS: 231
+Type 1-4 and press Enter: 1
 
-Now the wording. Put # where the number goes.  Examples:  Chests opened: #  |  Chest Hunt: #/500  |  # chests
+Now the wording (just Enter = keep it, "default" = original text).
+Put # where the number goes.  e.g.  Chests opened: #   |   Chest Hunt: #/500   |   # chests
 Text for the estimated total (now: APPROX. OPENED CHESTS: #): Chests opened: #
 
-Viewers see (estimated total only (APPROX)): Chests opened: 231</pre>
-<p>OBS updates at once, even while the counter is running. Run it again any time: Enter keeps an answer, <code>default</code> brings back the original wording. Any text, symbols and emoji work (emoji need an OBS font that has them).</p>
+Preview - OBS will show:
+    Chests opened: 231
+Press Enter to save it, or type n and Enter to cancel:</pre>
+<p>OBS updates at once, even while the counter is running. Run it again any time: Enter keeps an answer, <code>default</code> brings back the original wording. In the one-line layout, <code>#C</code> is the confirmed number and <code>#A</code> the estimated total. Any text, symbols and emoji work (emoji need an OBS font that has them).</p>
 <div class="note"><b>The counter cannot hide a Text source you already added in OBS.</b> If you see a number you did not choose, that source reads a different file: point it at <code>obs_output\chest_counter.txt</code> or hide it. The counter&rsquo;s own window always shows both numbers &mdash; that is for you, not for viewers.</div>
-<p><b>Advanced:</b> the same settings live in <code>config.toml</code> under <code>[display]</code> (<code>show</code>, <code>certain_text</code>, <code>approx_text</code>, with <code>{count}</code> for the number). For separately styled sources, the counter also writes:</p>
+<p><b>Advanced:</b> the same settings live in <code>config.toml</code> under <code>[display]</code> (<code>show</code>, <code>both_layout</code>, <code>certain_text</code>, <code>approx_text</code>, <code>combined_status_format</code>, with <code>{count}</code> for the number). For separately styled sources, the counter also writes:</p>
 <table>
   <tr><th>File (in <code>obs_output</code>)</th><th>Contains</th></tr>
-  <tr><td><code>chest_counter.txt</code></td><td><b>Recommended:</b> what you chose in Configure Counter.bat.</td></tr>
-  <tr><td><code>chest_status.txt</code></td><td>One line <code>20 certain &bull; ~231 estimated</code> when showing both; otherwise the same as chest_counter.txt.</td></tr>
+  <tr><td><code>chest_counter.txt</code></td><td><b>The one to use:</b> whatever you chose in Configure Counter.bat (all four layouts).</td></tr>
+  <tr><td><code>chest_status.txt</code></td><td>Legacy: one line with both numbers (or the single number you chose).</td></tr>
   <tr><td><code>certain_chests.txt</code></td><td>Always the confirmed number.</td></tr>
   <tr><td><code>approximate_chests.txt</code></td><td>Always the estimated total.</td></tr>
   <tr><td><code>last_chest.txt</code></td><td>The most recent chest, e.g. <code>CHEST +1 &bull; HIGH</code>.</td></tr>

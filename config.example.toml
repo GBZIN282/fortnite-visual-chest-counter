@@ -35,19 +35,18 @@ medium_counts_alone_languages = ["en"]      # languages whose medium-confidence 
 #   CERTAIN = chests detected with strong evidence
 #   APPROX  = the estimated TOTAL, which already INCLUDES the certain ones (never add them together)
 #
-# Use ONE file in OBS: obs_output\chest_counter.txt  (it shows what "show" below says).
-# The counter cannot hide a Text source you added in OBS: if a number you did not choose appears, that source reads
-# another file - point it at chest_counter.txt. Other files, for advanced layouts (names never change):
-#   chest_status.txt        same as chest_counter.txt, or one line with both numbers when show = "both"
-#   certain_chests.txt      always the certain_text
-#   approximate_chests.txt  always the approx_text
-#   last_chest.txt          the most recent chest
+# Use ONE file in OBS: obs_output\chest_counter.txt - every display choice below is written there, so you never change
+# the OBS source. (Other files, for advanced layouts with separately styled sources: certain_chests.txt = always the
+# certain_text, approximate_chests.txt = always the approx_text, chest_status.txt = legacy one-line file,
+# last_chest.txt = the most recent chest.)
 
-# What chest_counter.txt (and chest_status.txt) show:
-#   "both"    -> certain_text on the first line, approx_text on the second
-#   "certain" -> only certain_text
-#   "approx"  -> only approx_text  (the estimated total)
+# What chest_counter.txt shows:
+#   show = "approx"                              -> only approx_text  (the estimated total)
+#   show = "certain"                             -> only certain_text
+#   show = "both" and both_layout = "stacked"    -> certain_text on the first line, approx_text on the second
+#   show = "both" and both_layout = "inline"     -> one line: combined_status_format
 show = "both"
+both_layout = "stacked"
 
 # Your own wording. {count} is where the number goes. You may also use {certain} and {approx} anywhere.
 # Any text, symbols and emoji are fine (whether emoji display depends on the font you pick in OBS).
@@ -59,7 +58,7 @@ show = "both"
 certain_text = "CERTAIN OPENED CHESTS: {count}"
 approx_text = "APPROX. OPENED CHESTS: {count}"
 
-# The one-line file chest_status.txt. Placeholders: {certain} and {approx}
+# The one-line text (show = "both" + both_layout = "inline"). Placeholders: {certain} and {approx}
 combined_status_format = "{certain} certain • ~{approximate} estimated"
 
 # true -> 1,232      false -> 1232

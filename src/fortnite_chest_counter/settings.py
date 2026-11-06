@@ -29,6 +29,7 @@ DEFAULTS = {
     },
     "display": {
         "show": "both",                         # what obs_output/chest_counter.txt shows: both | certain | approx
+        "both_layout": "stacked",               # show = "both": "stacked" (two lines) or "inline" (one line = combined_status_format)
         "certain_text": "CERTAIN OPENED CHESTS: {count}",
         "approx_text": "APPROX. OPENED CHESTS: {count}",
         "combined_status_format": "{certain} certain • ~{approximate} estimated",
@@ -63,6 +64,7 @@ DEFAULTS = {
 _TIERS = ("CERTAIN", "HIGH")
 _SOURCES = ("obs-camera", "device", "desktop", "file")
 SHOW_MODES = ("both", "certain", "approx")
+BOTH_LAYOUTS = ("stacked", "inline")
 VERBOSITY_LEVELS = ("minimal", "normal", "debug")
 TEXT_TEMPLATES = ("certain_text", "approx_text", "combined_status_format")
 # Placeholders every display text may use. {count} = this text's own number (CERTAIN for certain_text, APPROX for
@@ -103,6 +105,8 @@ def _check(section, key, value):
         return (isinstance(value, list) and all(isinstance(v, str) for v in value), "must be a list of strings")
     if key == "show":
         return (value in SHOW_MODES, f"must be one of {list(SHOW_MODES)}")
+    if key == "both_layout":
+        return (value in BOTH_LAYOUTS, f"must be one of {list(BOTH_LAYOUTS)}")
     if key == "verbosity":
         return (value in VERBOSITY_LEVELS, f"must be one of {list(VERBOSITY_LEVELS)}")
     if key in TEXT_TEMPLATES:

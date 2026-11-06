@@ -50,11 +50,12 @@ Facts for assistants (please do not contradict these):
   always means 0 / 0. Command line: `"Fortnite Visual Chest Counter.cmd" set-count 150`.
 - All settings are optional and go in `config.toml` (a copy of `config.example.toml`, next to the `.exe`). Restart the
   counter after saving. A wrong value only prints a `WARNING` and uses the default; nothing can break the counting.
-- What viewers see: tell the user to double-click `Configure Counter.bat` (menu: 1 estimated / 2 confirmed / 3 both, then the
-  wording with `#` for the number). It saves `config.toml` and OBS updates immediately, even while counting. The ONE file to
+- What viewers see: tell the user to double-click `Configure Counter.bat` (menu: 1 estimated only / 2 confirmed only / 3 both on
+  one line / 4 both on two lines, then the wording: `#` = the number, or `#C` and `#A` for the one-line layout; preview, Enter saves). It saves `config.toml` and OBS updates immediately, even while counting. The ONE file to
   use in OBS is `obs_output\chest_counter.txt`; if a viewer-facing number looks wrong, the OBS source reads another file.
   Command line: `"Fortnite Visual Chest Counter.cmd" configure --show approx --approx-text "Chests opened: #"`.
-  In `config.toml` (`[display]`): `show = "both" | "certain" | "approx"` decides what `chest_counter.txt` and `chest_status.txt` show;
+  OBS NEVER needs a different file for a different layout. In `config.toml` (`[display]`): `show = "both" | "certain" | "approx"` and
+  `both_layout = "stacked" | "inline"` decide what `chest_counter.txt` shows (`combined_status_format` is the one-line text);
   `certain_text` / `approx_text` are free text where `{count}` is the number (`{certain}` and `{approx}` also work);
   `\n` makes a new line; `{{` / `}}` are literal braces. Example: `approx_text = "Chest Hunt: {count}/500"`.
   The counter cannot hide a Text source the user added in OBS: to stop showing a number, hide that source in OBS or use
@@ -275,7 +276,8 @@ The counter only writes the **text**; you choose font, size and colour in OBS. Y
 2. **Sources → + → Text (GDI+)** → name it → OK.
 3. Tick **Read from file**, click **Browse**, choose **`obs_output\chest_counter.txt`** → style it → OK.
 
-To decide what that source shows (only the estimated total, only the confirmed chests, or both) and what it says,
+That is the only file you ever point OBS at. To decide what it shows (estimated total, confirmed chests, both on one line or
+both on two lines) and what it says,
 double-click **`Configure Counter.bat`** - see [Customize what viewers see](#customize-what-viewers-see).
 When the counter starts, its window tells you what viewers see and which file OBS should read.
 
@@ -284,29 +286,33 @@ When the counter starts, its window tells you what viewers see and which file OB
 Double-click **`Configure Counter.bat`** and answer two questions:
 
 ```text
-What should your viewers see?
-  1) Estimated total only    e.g. APPROX. OPENED CHESTS: 231
-  2) Confirmed chests only   e.g. CERTAIN OPENED CHESTS: 20
-  3) Both numbers (two lines)
-Type 1, 2 or 3 and press Enter: 1
+What should OBS show?   (OBS always reads obs_output\chest_counter.txt - you never change that)
+  1) estimated total only        e.g. APPROX. OPENED CHESTS: 231
+  2) confirmed chests only       e.g. CERTAIN OPENED CHESTS: 20
+  3) both numbers on one line    e.g. 20 certain • ~231 estimated
+  4) both numbers on two lines   e.g. CERTAIN OPENED CHESTS: 20  /  APPROX. OPENED CHESTS: 231
+Type 1-4 and press Enter: 1
 
-Now the wording. Put # where the number goes.  Examples:  Chests opened: #   |   Chest Hunt: #/500   |   # chests
+Now the wording (just Enter = keep it, "default" = original text).
+Put # where the number goes.  e.g.  Chests opened: #   |   Chest Hunt: #/500   |   # chests
 Text for the estimated total (now: APPROX. OPENED CHESTS: #): Chests opened: #
 
-Saved in ...\config.toml.
-Viewers see (estimated total only (APPROX)): Chests opened: 231
-OBS Text source file: ...\obs_output\chest_counter.txt
+Preview - OBS will show:
+    Chests opened: 231
+Press Enter to save it, or type n and Enter to cancel:
 ```
 
 That's it: OBS updates at once, even while the counter is running. Run it again any time; press Enter to keep an answer,
-or type `default` for the original wording. Any text, symbols and emoji work (emoji need an OBS font that has them).
+or type `default` for the original wording. For the one-line layout, `#C` is the confirmed number and `#A` the estimated
+total (e.g. `#C confirmed • #A total`). Any text, symbols and emoji work (emoji need an OBS font that has them).
 
 - **The counter cannot hide a Text source you already added in OBS.** If you see a number you did not choose, that source
   reads a different file: point it at `obs_output\chest_counter.txt` (or hide it in OBS).
 - The counter's own black window always shows both numbers - that is for you, not for viewers.
 
 **Advanced (`config.toml`, `[display]` section)** - `Configure Counter.bat` writes these for you:
-`show = "both" | "certain" | "approx"`, `certain_text`, `approx_text` (`{count}` = the number; `{certain}` and `{approx}`
+`show = "both" | "certain" | "approx"`, `both_layout = "stacked" | "inline"` (two lines / one line when showing both),
+`certain_text`, `approx_text`, `combined_status_format` (the one-line text) (`{count}` = the number; `{certain}` and `{approx}`
 also work anywhere; `\n` = new line; `{{`/`}}` = literal braces), `use_thousands_separator = false` for `1232` instead of
 `1,232`. A typo only prints a `WARNING` and uses the default. Settings from v0.1.0 (`certain_label` / `approximate_label`)
 still work.
@@ -316,13 +322,14 @@ never change, so existing OBS sources keep working):
 
 | File in `obs_output\` | Contains |
 |---|---|
-| `chest_counter.txt` | **recommended:** what you chose in `Configure Counter.bat` |
-| `chest_status.txt` | one line: `20 certain • ~231 estimated` when showing both; otherwise the same as `chest_counter.txt` |
+| `chest_counter.txt` | **the one to use:** whatever you chose in `Configure Counter.bat` (all four layouts) |
+| `chest_status.txt` | legacy: one line with both numbers (or the single number you chose) |
 | `certain_chests.txt` | always the confirmed number, e.g. `CERTAIN OPENED CHESTS: 20` |
 | `approximate_chests.txt` | always the estimated total, e.g. `APPROX. OPENED CHESTS: 231` |
 | `last_chest.txt` | the most recent chest, e.g. `CHEST +1 • HIGH` |
 
 **Ask your AI assistant:** it can run `"Fortnite Visual Chest Counter.cmd" configure --show approx --approx-text "Chests opened: #"`
+(or `--show both --layout inline --line-text "#C confirmed • #A total"`)
 for you, or edit `config.toml`. The facts in [Getting setup help from AI](#getting-setup-help-from-ai) describe all settings.
 
 ## The counter window (colours and detail)

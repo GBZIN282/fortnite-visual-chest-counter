@@ -149,33 +149,46 @@ def display_text(display, which, state):
                                 thousands=display["use_thousands_separator"])
 
 
-def overlay_text(display, state):
-    """obs_output/chest_counter.txt: one OBS Text source that shows what [display] show asks for."""
-    show = display.get("show", "both")
-    if show == "certain":
-        return display_text(display, "certain", state)
-    if show == "approx":
-        return display_text(display, "approx", state)
-    return display_text(display, "certain", state) + "\n" + display_text(display, "approx", state)
-
-
-SHOW_DESCRIPTIONS = {"both": "both numbers", "certain": "confirmed chests only (CERTAIN)",
-                     "approx": "estimated total only (APPROX)"}
-
-
-def status_line_text(display, state):
-    """obs_output/chest_status.txt: the one-line all-in-one file. It follows `show` too, so whichever all-in-one file
-    OBS reads, choosing "approx" shows only APPROX (v0.1.0 recommended this file for a single source)."""
-    if display.get("show", "both") != "both":
-        return overlay_text(display, state)
+def inline_text(display, state):
+    """Both numbers on one line: the combined_status_format wording, e.g. "20 certain • ~231 estimated"."""
     return settings.render_text(display["combined_status_format"], settings.DEFAULTS["display"]["combined_status_format"],
                                 certain=state["certain"], approx=state["approximate"], thousands=display["use_thousands_separator"])
 
 
+def display_mode(display):
+    """'approx' | 'certain' | 'inline' | 'stacked' - the four things chest_counter.txt can show."""
+    show = display.get("show", "both")
+    if show in ("approx", "certain"):
+        return show
+    return "inline" if display.get("both_layout", "stacked") == "inline" else "stacked"
+
+
+MODE_DESCRIPTIONS = {"approx": "estimated total only", "certain": "confirmed chests only",
+                     "inline": "both numbers on one line", "stacked": "both numbers on two lines"}
+
+
+def overlay_text(display, state):
+    """obs_output/chest_counter.txt - THE file OBS reads. Every display mode renders here, so switching modes never
+    requires changing the OBS source."""
+    mode = display_mode(display)
+    if mode == "certain":
+        return display_text(display, "certain", state)
+    if mode == "approx":
+        return display_text(display, "approx", state)
+    if mode == "inline":
+        return inline_text(display, state)
+    return display_text(display, "certain", state) + "\n" + display_text(display, "approx", state)
+
+
+def status_line_text(display, state):
+    """obs_output/chest_status.txt (legacy, advanced): one line with both numbers, or the single number when only one is
+    chosen. New setups should use chest_counter.txt."""
+    return overlay_text(display, state) if display_mode(display) in ("approx", "certain") else inline_text(display, state)
+
+
 def overlay_summary(display, state, obs_dir):
     """Two lines telling the user exactly what viewers see and which file OBS must read."""
-    show = display.get("show", "both")
-    return (f"Viewers see ({SHOW_DESCRIPTIONS.get(show, show)}): {overlay_text(display, state).replace(chr(10), '  /  ')}",
+    return (f"Viewers see ({MODE_DESCRIPTIONS[display_mode(display)]}): {overlay_text(display, state).replace(chr(10), '  /  ')}",
             f"OBS Text source file: {(Path(obs_dir) / 'chest_counter.txt').resolve()}")
 
 
@@ -1078,7 +1091,24 @@ def hash_from_text(template):
     return str(template).replace("{count}", "#").replace("{{", "{").replace("}}", "}")
 
 
-CONFIGURE_CHOICES = {"1": "approx", "2": "certain", "3": "both"}
+CONFIGURE_CHOICES = {"1": "approx", "2": "certain", "3": "inline", "4": "stacked"}
+MODE_SETTINGS = {"approx": {"show": "approx"}, "certain": {"show": "certain"},
+                 "inline": {"show": "both", "both_layout": "inline"}, "stacked": {"show": "both", "both_layout": "stacked"}}
+
+
+def line_from_markers(text):
+    """One-line wording: '#C confirmed • #A total' -> '{certain} confirmed • {approx} total' (braces kept literal)."""
+    import re
+    literal = str(text).replace("{", "{{").replace("}", "}}")
+    literal = re.sub("#a", "{approx}", re.sub("#c", "{certain}", literal, flags=re.I), flags=re.I)
+    if "{approx}" not in literal and "{certain}" not in literal:
+        literal = "{certain} / {approx} " + literal.strip()
+    return literal
+
+
+def markers_from_line(template):
+    return (str(template).replace("{certain}", "#C").replace("{approximate}", "#A").replace("{approx}", "#A")
+            .replace("{{", "{").replace("}}", "}"))
 
 
 def _ask(question, valid=None):
@@ -1094,52 +1124,73 @@ def _ask(question, valid=None):
 
 
 def cmd_configure(args):
-    """Choose what viewers see (all-in-one OBS file) and its wording, then save config.toml. Asks if no options given."""
+    """Choose what viewers see (the single OBS file chest_counter.txt) and its wording, then save config.toml.
+    Asks if no options are given."""
     banner()
     cfg, _ = make_config(args)
     preflight(cfg, needs_video=False)
     session = CounterSession(cfg)
     display = cfg["display"]
     path = config_path(args)
-    show, texts = display["show"], {}
     defaults = settings.DEFAULTS["display"]
+    mode, texts = display_mode(display), {}
 
-    if args.show or args.approx_text is not None or args.certain_text is not None:
-        show = args.show or show
+    if args.show or args.layout or args.approx_text is not None or args.certain_text is not None or args.line_text is not None:
+        if args.show == "both" or (args.show is None and args.layout):
+            mode = args.layout or ("inline" if display_mode(display) == "inline" else "stacked")
+        elif args.show:
+            mode = args.show
         if args.approx_text is not None:
             texts["approx_text"] = text_from_hash(args.approx_text)
         if args.certain_text is not None:
             texts["certain_text"] = text_from_hash(args.certain_text)
+        if args.line_text is not None:
+            texts["combined_status_format"] = line_from_markers(args.line_text)
+        confirm = False
     else:
-        sample = dict(session.state)
-        CONSOLE.line("\nWhat should your viewers see?", "bold")
-        CONSOLE.line(f"  1) Estimated total only    e.g. {display_text(display, 'approx', sample)}")
-        CONSOLE.line(f"  2) Confirmed chests only   e.g. {display_text(display, 'certain', sample)}")
-        CONSOLE.line("  3) Both numbers (two lines)")
-        current = {v: k for k, v in CONFIGURE_CHOICES.items()}[show]
-        answer = _ask(f"Type 1, 2 or 3 and press Enter (just Enter = keep {current}, {SHOW_DESCRIPTIONS[show]}): ",
-                      set(CONFIGURE_CHOICES))
-        show = CONFIGURE_CHOICES.get(answer, show)
-        wanted = {"approx": ["approx"], "certain": ["certain"], "both": ["certain", "approx"]}[show]
-        CONSOLE.line("\nNow the wording. Put # where the number goes.  Examples:  Chests opened: #   |   Chest Hunt: #/500   |   # chests")
-        CONSOLE.line('Type "default" for the original text, or just press Enter to keep the current one.')
-        for which in wanted:
-            key = f"{which}_text"
-            label = "estimated total" if which == "approx" else "confirmed chests"
-            typed = _ask(f"Text for the {label} (now: {hash_from_text(display[key])}): ")
+        state = dict(session.state)
+        examples = {m: overlay_text({**display, **MODE_SETTINGS[m]}, state).replace("\n", "  /  ") for m in MODE_SETTINGS}
+        CONSOLE.line("\nWhat should OBS show?   (OBS always reads obs_output\\chest_counter.txt - you never change that)", "bold")
+        for key, m in CONFIGURE_CHOICES.items():
+            CONSOLE.line(f"  {key}) {MODE_DESCRIPTIONS[m]:<27s} e.g. {examples[m]}")
+        current = {v: k for k, v in CONFIGURE_CHOICES.items()}[mode]
+        answer = _ask(f"Type 1-4 and press Enter (just Enter = keep {current}, {MODE_DESCRIPTIONS[mode]}): ", set(CONFIGURE_CHOICES))
+        mode = CONFIGURE_CHOICES.get(answer, mode)
+        CONSOLE.line('\nNow the wording (just Enter = keep it, "default" = original text).')
+        if mode == "inline":
+            CONSOLE.line("Put #C where the confirmed number goes and #A where the estimated total goes.  e.g.  #C confirmed • #A total")
+            typed = _ask(f"One-line text (now: {markers_from_line(display['combined_status_format'])}): ")
             if typed.lower() == "default":
-                texts[key] = defaults[key]
+                texts["combined_status_format"] = defaults["combined_status_format"]
             elif typed:
-                texts[key] = text_from_hash(typed)
+                texts["combined_status_format"] = line_from_markers(typed)
+        else:
+            CONSOLE.line("Put # where the number goes.  e.g.  Chests opened: #   |   Chest Hunt: #/500   |   # chests")
+            for which in {"approx": ["approx"], "certain": ["certain"], "stacked": ["certain", "approx"]}[mode]:
+                key = f"{which}_text"
+                label = "estimated total" if which == "approx" else "confirmed chests"
+                typed = _ask(f"Text for the {label} (now: {hash_from_text(display[key])}): ")
+                if typed.lower() == "default":
+                    texts[key] = defaults[key]
+                elif typed:
+                    texts[key] = text_from_hash(typed)
+        confirm = True
 
-    changes = {"show": show, **texts}
-    if any(display.get(k) != v for k, v in changes.items()):
+    changes = {**MODE_SETTINGS[mode], **texts}
+    preview = {**display, **changes}
+    if not any(display.get(k) != v for k, v in changes.items()):
+        CONSOLE.line("\nNothing changed.")
+    else:
+        CONSOLE.line("\nPreview - OBS will show:", "bold")
+        for line in overlay_text(preview, session.state).split("\n"):
+            CONSOLE.line(f"    {line}", "green")
+        if confirm and _ask("Press Enter to save it, or type n and Enter to cancel: ").lower().startswith("n"):
+            CONSOLE.line("Cancelled - nothing was changed.")
+            return
         update_config_file(path, "display", changes)
         cfg, _ = make_config(args)
         session.display = cfg["display"]
-        CONSOLE.line(f"\nSaved in {path.resolve()}.", "green")
-    else:
-        CONSOLE.line("\nNothing changed.")
+        CONSOLE.line(f"Saved in {path.resolve()}.", "green")
     session.write_obs()
     viewers, obs_file = overlay_summary(session.display, session.state, session.obs_dir)
     CONSOLE.line(viewers, "bold")
@@ -1379,6 +1430,8 @@ def build_parser():
     sub.add_parser("reset", parents=[common], help="set both counts to 0").set_defaults(func=cmd_reset)
     p = sub.add_parser("configure", parents=[common], help="choose what viewers see in OBS and its wording (asks if no options)")
     p.add_argument("--show", choices=list(settings.SHOW_MODES), help="what chest_counter.txt shows")
+    p.add_argument("--layout", choices=list(settings.BOTH_LAYOUTS), help='with --show both: "inline" (one line) or "stacked" (two lines)')
+    p.add_argument("--line-text", help='one-line text for "inline": #C = confirmed, #A = estimated (e.g. "#C confirmed • #A total")')
     p.add_argument("--approx-text", help='text for the estimated total, # = the number (e.g. "Chests opened: #")')
     p.add_argument("--certain-text", help="text for the confirmed chests, # = the number")
     p.set_defaults(func=cmd_configure)
