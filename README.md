@@ -6,14 +6,14 @@ A free, open-source Windows app that recognises the chest-opening pop-ups visibl
 count - from your own stream's OBS feed (single-PC or dual-PC), a capture card, a livestream you watch, or a recorded video.
 The numbers go to a text file that an OBS Text source shows on stream, so nobody has to count by hand.
 
-It works only with the picture: it does not need the Fortnite process, read game memory or files, inject code, modify the
-game, send input or automate gameplay, and it never reveals anything that is not already on screen (no hidden chests, no
-enemy information). See [Fair play and compatibility](#fair-play-and-compatibility).
+The app works entirely through video analysis, without directly interacting with Fortnite. It does not access game memory
+or files, inject code, modify the game, or simulate player inputs. It simply analyses what is already visible on screen,
+without revealing hidden information or providing gameplay assistance. See
+[Fair play and compatibility](#fair-play-and-compatibility).
 
-> **Two PCs, no capture card - tested.** Run the counter on your streaming PC while the gaming PC sends its picture over
-> your local network with OBS's built-in SRT support, so nothing from this project runs where Fortnite runs. Tested
-> successfully on 2026-11-07 with v0.2.0 (many chests counted, no noticeable lag).
-> **[Dual-PC SRT setup guide](docs/guides/obs-dual-pc-srt.md)**
+> **Two PCs, no capture card required — tested.** Use OBS's built-in SRT support to send gameplay video from your gaming
+> PC to a second PC running Fortnite Visual Chest Counter. Successfully tested with v0.2.0 on November 7, 2026, with
+> numerous chests counted and no noticeable lag. **[Dual-PC SRT setup guide](docs/guides/obs-dual-pc-srt.md)**
 
 > Independent, unofficial project: not affiliated with, endorsed by or approved by Epic Games. "Fortnite" is a trademark of
 > Epic Games, Inc.
@@ -127,7 +127,7 @@ this one has not been reviewed or approved by Epic. The most conservative ways t
 
 - **Count recorded video** (Dashboard -> Analyse a recording), or
 - **run the counter on a separate streaming PC** (dual-PC setup, [over the network with SRT](docs/guides/obs-dual-pc-srt.md)
-  or [with a capture card](docs/guides/capture-card.md)), so nothing from this project runs where Fortnite runs.
+  or [with a capture card](docs/guides/capture-card.md)), so the counter and the game run on different PCs.
 
 Running the counter on the same PC as Fortnite (single-PC OBS setup) works technically, but its compatibility with
 Fortnite's anti-cheat has not been officially verified. A dual-PC setup is not a compliance guarantee either; it simply keeps
