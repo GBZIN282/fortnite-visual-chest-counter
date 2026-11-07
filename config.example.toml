@@ -27,7 +27,7 @@ count_interaction_object_as_approx = true   # button + chest-looking object, eve
 medium_counts_alone_languages = ["en"]      # languages whose medium-confidence popup counts by itself
 
 [display]
-# What your viewers see. EASIEST: double-click "Configure Counter.bat" - it asks two questions and writes these lines for you.
+# What your viewers see. EASIEST: the Overlay page of the app - it writes these lines for you.
 # The counter only writes TEXT FILES (in the obs_output folder); OBS shows them with a "Text (GDI+)" source that has
 # "Read from file" ticked. Fonts, colours and size are set in OBS, not here.
 #
@@ -96,7 +96,7 @@ dir = "logs"
 #   "device"     = a capture card opened directly (advanced; set "device" below)
 #   "desktop"    = capture a monitor (fallback, easily disturbed by other windows)
 source = "obs-camera"
-# Only for source = "device": the exact device name (Diagnostics.bat lists the names).
+# Only for source = "device": the exact device name (the app's Video source list sets it for you).
 device = "OBS Virtual Camera"
 # Only for source = "desktop": which monitor (1 = the first).
 monitor = 1

@@ -13,10 +13,14 @@ license-files = ["LICENSE"]
 dependencies = ["numpy", "scipy"]
 
 [project.optional-dependencies]
-dev = ["pytest", "pyinstaller", "matplotlib", "librosa", "soundfile"]
+gui = ["PySide6-Essentials>=6.8"]                      # the desktop app (v0.2.0+)
+dev = ["pytest", "PySide6-Essentials>=6.8", "pefile", "pillow", "matplotlib", "librosa", "soundfile"]
 
 [project.scripts]
 fortnite-chest-counter = "fortnite_chest_counter.counter:main"
+
+[project.gui-scripts]
+fortnite-chest-counter-app = "fortnite_chest_counter.gui.app:main"
 
 [tool.setuptools.dynamic]
 version = { attr = "fortnite_chest_counter.version.__version__" }
@@ -25,7 +29,7 @@ version = { attr = "fortnite_chest_counter.version.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-fortnite_chest_counter = ["templates/**/*.npy"]
+fortnite_chest_counter = ["templates/**/*.npy", "gui/assets/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

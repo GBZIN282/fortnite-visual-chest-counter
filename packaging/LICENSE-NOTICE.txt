@@ -19,6 +19,12 @@ runtime\PROVENANCE.txt):
   NumPy (+ OpenBLAS, LAPACK) BSD 3-Clause (+ bundled library licenses)        runtime\licenses\NumPy-LICENSE.txt
   SciPy (+ bundled libs)     BSD 3-Clause (+ bundled library licenses)        runtime\licenses\SciPy-LICENSE.txt
   FFmpeg (ffmpeg.exe)        LGPL v3 (unmodified LGPL build, no GPL parts)    runtime\ffmpeg\LICENSE.txt, FFMPEG-NOTICE.txt
+  Qt for Python (PySide6,    LGPL v3 (unmodified official wheels, only the    runtime\licenses\Qt-NOTICE.txt,
+  Shiboken6) and Qt          QtCore/QtGui/QtWidgets parts)                    LGPL-3.0.txt, GPL-3.0.txt
 
 FFmpeg is run as a separate program; Fortnite Visual Chest Counter does not link against it. Where to get the FFmpeg
-source code for the bundled build is explained in runtime\ffmpeg\FFMPEG-NOTICE.txt.
+source code for the bundled build is explained in runtime\ffmpeg\FFMPEG-NOTICE.txt. The Qt libraries are separate,
+dynamically loaded files; where to get their source code is explained in runtime\licenses\Qt-NOTICE.txt.
+
+"Fortnite Visual Chest Counter.exe" is a small launcher that is part of this program (MIT): it starts the app with the
+bundled Python. Its source code is packaging/launcher/launcher.c in the project's repository.

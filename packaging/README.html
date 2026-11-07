@@ -36,11 +36,11 @@
 <main>
 
 <h1>Fortnite Visual Chest Counter</h1>
-<p class="sub">Visual chest detection for OBS, capture cards &amp; video files &middot; v0.1.1 public beta &middot; Windows 10 / 11 &middot; no Python or programming needed</p>
+<p class="sub">Visual chest detection for OBS, capture cards &amp; video files &middot; v0.2.0 public beta &middot; Windows 10 / 11 &middot; no Python or programming needed</p>
 
 <h2 style="border-top:none;margin-top:1rem">What this is</h2>
-<p>A small helper for streamers. It watches your gameplay picture (through OBS) and keeps a running count of
-the <b>chests you open</b> in Fortnite. It writes the numbers into text files that you show on stream with a normal OBS
+<p>A small app for streamers. It watches your gameplay picture (through OBS) and keeps a running count of
+the <b>chests you open</b> in Fortnite. It writes the numbers into a text file that you show on stream with a normal OBS
 text source. You choose the font, size and colours in OBS. It does not touch Fortnite, the game files or your account:
 it only looks at the video picture, like a viewer would.</p>
 
@@ -70,7 +70,7 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
   <li><a href="#inputs">Other video inputs</a></li>
   <li><a href="#overlay">Show it on stream</a></li>
   <li><a href="#custom">Customize text</a></li>
-  <li><a href="#window">Counter window</a></li>
+  <li><a href="#activity">Activity &amp; preview</a></li>
   <li><a href="#video">Recorded video</a></li>
   <li><a href="#start">Starting count</a></li>
   <li><a href="#reset">Reset</a></li>
@@ -87,15 +87,15 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
   <li><b>OBS Studio 28 or newer</b> (it has the Virtual Camera built in).</li>
   <li>Fortnite shown in a <b>16:9</b> picture (1920&times;1080 is ideal; 1280&times;720 or higher works) with the <b>normal HUD</b> visible, in <b>English or Brazilian Portuguese</b>.</li>
   <li>About half of one CPU core. No graphics card needed.</li>
-  <li><b>Nothing else to install.</b> The video helper (FFmpeg) is already inside the folder.</li>
+  <li><b>Nothing else to install.</b> Everything the app needs is already inside the folder.</li>
 </ul>
 
 <h2 id="quick">The 30-second version</h2>
 <ol>
   <li>Unzip the folder anywhere you can write files (Desktop or Documents is fine).</li>
   <li>In OBS: make a scene called <b>ChestDetectorFeed</b> with only your game in it, and start the <b>Virtual Camera</b> from that scene.</li>
-  <li>Double-click <b>Start Chest Counter.bat</b> and play.</li>
-  <li>In OBS, add a <b>Text</b> source that reads <code>obs_output\chest_counter.txt</code>. Double-click <b>Configure Counter.bat</b> to choose what it shows.</li>
+  <li>Open <b>Fortnite Visual Chest Counter.exe</b>, keep <b>OBS Virtual Camera</b> as the video source and click <b>Start counting</b>.</li>
+  <li>In OBS, add a <b>Text</b> source that reads <code>obs_output\chest_counter.txt</code>. The app&rsquo;s <b>Overlay</b> page shows the exact path (with a Copy button) and lets you choose what it says.</li>
 </ol>
 <p>Details for each step are below.</p>
 
@@ -104,19 +104,12 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
 <h3>1. Unzip</h3>
 <p>Right-click the zip &rarr; <b>Extract All</b>. Do <b>not</b> run it from inside the zip, and don&rsquo;t put it in <i>Program Files</i>.
 The folder contains:</p>
-<pre>Start Chest Counter.bat        &lt;- the one you double-click
-Set Starting Count.bat         enter the chests you have already opened
-Configure Counter.bat          choose what viewers see in OBS and its wording
-Reset Counter.bat              set both counts to 0
-Show Counter.bat               look at the current counts
-Count Video File.bat           drag a recorded video onto this file to count it
-Diagnostics.bat                for support, if something does not work
-Fortnite Visual Chest Counter.cmd   command-line entry for advanced use
+<pre>Fortnite Visual Chest Counter.exe   &lt;- the app: the only thing you open
 README.html                    this guide
-config.example.toml            optional settings (see "Settings")
+config.example.toml            optional advanced settings (see "Settings")
 obs_output\                    the text files OBS reads
 state\  logs\                  your counter and logs (kept when you update)
-runtime\                       program files (the official Python runtime from python.org, FFmpeg) - don't touch</pre>
+runtime\                       program files (the official Python runtime from python.org, FFmpeg, Qt) - don't touch</pre>
 
 <h3>2. Make a clean feed for the counter in OBS</h3>
 <p>The counter must see <b>only the game picture</b> (no webcam, alerts or overlays covering the screen). The easiest way is a separate scene that you never show on stream.</p>
@@ -135,14 +128,14 @@ runtime\                       program files (the official Python runtime from p
 </ol>
 <p>Your normal stream scene is unaffected: viewers still see whatever scene you choose. The counter reads <i>only</i> ChestDetectorFeed.</p>
 
-<h3>4. Start the counter</h3>
-<p>Double-click <b>Start Chest Counter.bat</b>. A black window opens and shows lines like:</p>
-<pre>Connected: video 1920x1080 @ 30.0 fps -&gt; analysed at 15 frames per second
-Counting has started. Counts are kept when you stop and restart.
-LIVE  15.0 detector fps | source 30.0 fps | CERTAIN 0 | APPROX 0 | dropped 0 | 6 ms/frame</pre>
-<p>Leave that window open while you play (minimise it if you like). Each time a chest is counted a line is printed.
-To stop: press <kbd>Q</kbd> in the window, or just close it. Your numbers are saved after every chest.</p>
-<p>If you see <i>&ldquo;OBS Virtual Camera was not found&rdquo;</i>, follow the three steps it prints (open OBS, Start Virtual Camera, run again).</p>
+<h3>4. Start counting</h3>
+<p>Open <b>Fortnite Visual Chest Counter.exe</b>. On the <b>Dashboard</b>, the <b>Video source</b> is already <b>OBS Virtual Camera</b>; click
+<b>Start counting</b>. The status at the top right changes to <span class="ok">Counting</span>, and a line under the video source shows the
+picture size and how many pictures per second are analysed (about 15).</p>
+<p>Leave the app open while you play; you can minimise it. Each chest appears in the <b>Activity</b> panel the moment it is counted
+and the big numbers go up. To stop, click <b>Stop counting</b> (or close the app; it asks first). Your numbers are saved after every chest
+and are kept for next time.</p>
+<p>If a red message says <i>&ldquo;OBS Virtual Camera was not found&rdquo;</i>, follow the steps it shows (open OBS, Start Virtual Camera, click Start counting again).</p>
 
 <h3>5. Show the numbers on stream</h3>
 <p>See <a href="#overlay">Show it on stream</a> below.</p>
@@ -154,114 +147,94 @@ Capture card
    &#8595;
 Streaming PC &#8594; OBS &#8594; scene "ChestDetectorFeed" &#8594; Virtual Camera &#8594; Fortnite Visual Chest Counter</div>
 <ul>
-  <li>Install and run the counter on the <b>streaming PC</b> (the one running OBS). <b>Nothing</b> needs to run or be installed on the gaming PC or console.</li>
+  <li>Unzip and open the app on the <b>streaming PC</b> (the one running OBS). <b>Nothing</b> needs to run or be installed on the gaming PC or console.</li>
   <li>In OBS on the streaming PC, create the <code>ChestDetectorFeed</code> scene and add your capture card as a <b>Video Capture Device</b> source. Make it <b>fill the scene</b> (<kbd>Ctrl</kbd>+<kbd>F</kbd>). Nothing else goes in this scene.</li>
   <li>Set the Virtual Camera to <b>Scene &rarr; ChestDetectorFeed</b> and click <b>Start Virtual Camera</b> (exact clicks in step 3 above).</li>
-  <li>Double-click <b>Start Chest Counter.bat</b> &mdash; the same launcher as everyone else.</li>
+  <li>In the app, keep <b>OBS Virtual Camera</b> as the video source and click <b>Start counting</b> &mdash; the same as everyone else.</li>
 </ul>
-<div class="note warn"><b>Advanced: reading the capture card directly (no Virtual Camera).</b> Possible, but many capture cards can only be opened by <b>one</b> program at a time, so it does not work while OBS is using the card.
-To try: make a copy of <code>config.example.toml</code> named <code>config.toml</code>, set <code>source = "device"</code> and <code>device = "exact device name"</code> under <code>[live]</code>
-(<b>Diagnostics.bat</b> lists the names), and start the counter. If it says the device cannot be opened, switch back to the Virtual Camera method.</div>
+<div class="note warn"><b>Advanced: reading the capture card directly (no Virtual Camera).</b> Your capture card also appears in the app&rsquo;s
+<b>Video source</b> list (&ldquo;Capture device: &hellip;&rdquo;). Many capture cards can only be opened by <b>one</b> program at a time, so
+this does not work while OBS is using the card. If the app says the device cannot be opened, switch back to OBS Virtual Camera.</div>
 
 <h2 id="inputs">Other video inputs (Virtual Camera already in use?)</h2>
-<p>OBS Virtual Camera is the easiest input, but not the only one. Both options below are set in <code>config.toml</code>
-(copy <code>config.example.toml</code>, rename the copy to <code>config.toml</code>, edit it with Notepad, save, restart the counter).</p>
+<p>OBS Virtual Camera is the easiest input, but not the only one. Pick another one in the app&rsquo;s <b>Video source</b> list
+(click <b>Refresh</b> if you just plugged something in):</p>
 <table>
-  <tr><th>Option</th><th>Put under <code>[live]</code></th><th>Good to know</th></tr>
-  <tr><td><b>OBS projector on a second monitor</b>: in OBS right-click your gameplay source &rarr; <b>Fullscreen Projector (Source)</b> &rarr; your second monitor</td>
-      <td><code>source = "desktop"</code><br><code>monitor = 2</code></td>
-      <td>OBS keeps the capture card and the Virtual Camera. Needs a spare <b>16:9</b> monitor; keep other windows off it. <code>Diagnostics.bat</code> lists the monitor numbers. Projector setup not yet tested.</td></tr>
-  <tr><td><b>Capture card directly</b> (no OBS)</td>
-      <td><code>source = "device"</code><br><code>device = "Exact device name"</code></td>
-      <td>Copy the name from <code>logs\diagnostics.txt</code> after running <code>Diagnostics.bat</code>. Many cards work with only <b>one</b> program at a time, so close OBS or remove the card from it. Uses the card&rsquo;s default resolution. Not yet tested with physical cards.</td></tr>
+  <tr><th>In the list</th><th>Good to know</th></tr>
+  <tr><td><b>Screen 2</b> (etc.) with an <b>OBS projector</b>: in OBS right-click your gameplay source &rarr; <b>Fullscreen Projector (Source)</b> &rarr; your second monitor</td>
+      <td>OBS keeps the capture card and the Virtual Camera. Needs a spare <b>16:9</b> monitor; keep other windows off it. Projector setup not yet tested.</td></tr>
+  <tr><td><b>Capture device: &hellip;</b> (no OBS)</td>
+      <td>Many cards work with only <b>one</b> program at a time, so close OBS or remove the card from it. Uses the card&rsquo;s default resolution. Not yet tested with physical cards.</td></tr>
 </table>
+<p>Turn on <b>Live preview</b> on the Dashboard to check that the counter sees the game, full screen, with the HUD.</p>
 
 <h2 id="overlay">Show it on stream (OBS text source)</h2>
 <p>The counter only writes the <i>text</i>. You style it in OBS however you like. You need <b>one</b> source:</p>
 <ol>
   <li>Open the scene your <b>viewers see</b> (not ChestDetectorFeed).</li>
   <li>In <b>Sources</b> click <b>+</b> &rarr; <b>Text (GDI+)</b> &rarr; name it &ldquo;Chests&rdquo; &rarr; OK.</li>
-  <li>Tick <b>Read from file</b>, click <b>Browse</b> and choose <code>obs_output\chest_counter.txt</code> (inside the counter folder).</li>
+  <li>Tick <b>Read from file</b>, click <b>Browse</b> and choose <code>obs_output\chest_counter.txt</code> (inside the counter folder). The app&rsquo;s <b>Overlay</b> page shows this exact path; <b>Copy path</b> puts it on the clipboard.</li>
   <li>Choose a font, size and colour. Click OK and place it on screen.</li>
 </ol>
-<p>To choose what it shows and what it says, double-click <b>Configure Counter.bat</b> (next section). When the counter starts, its window tells you what viewers see and which file OBS should read.</p>
 <div class="note">Put the text source only in the scene your <b>viewers</b> see, never in ChestDetectorFeed.</div>
 
 <h2 id="custom">Customize what viewers see</h2>
-<p>Double-click <b>Configure Counter.bat</b> and answer two questions:</p>
-<pre>What should OBS show?   (OBS always reads obs_output\chest_counter.txt - you never change that)
-  1) estimated total only        e.g. APPROX. OPENED CHESTS: 231
-  2) confirmed chests only       e.g. CERTAIN OPENED CHESTS: 20
-  3) both numbers on one line    e.g. 20 certain • ~231 estimated
-  4) both numbers on two lines   e.g. CERTAIN OPENED CHESTS: 20  /  APPROX. OPENED CHESTS: 231
-Type 1-4 and press Enter: 1
-
-Now the wording (just Enter = keep it, "default" = original text).
-Put # where the number goes.  e.g.  Chests opened: #   |   Chest Hunt: #/500   |   # chests
-Text for the estimated total (now: APPROX. OPENED CHESTS: #): Chests opened: #
-
-Preview - OBS will show:
-    Chests opened: 231
-Press Enter to save it, or type n and Enter to cancel:</pre>
-<p>OBS updates at once, even while the counter is running. Run it again any time: Enter keeps an answer, <code>default</code> brings back the original wording. In the one-line layout, <code>#C</code> is the confirmed number and <code>#A</code> the estimated total. Any text, symbols and emoji work (emoji need an OBS font that has them).</p>
-<div class="note"><b>The counter cannot hide a Text source you already added in OBS.</b> If you see a number you did not choose, that source reads a different file: point it at <code>obs_output\chest_counter.txt</code> or hide it. The counter&rsquo;s own window always shows both numbers &mdash; that is for you, not for viewers.</div>
-<p><b>Advanced:</b> the same settings live in <code>config.toml</code> under <code>[display]</code> (<code>show</code>, <code>both_layout</code>, <code>certain_text</code>, <code>approx_text</code>, <code>combined_status_format</code>, with <code>{count}</code> for the number). For separately styled sources, the counter also writes:</p>
+<p>Open the <b>Overlay</b> page in the app:</p>
+<ul>
+  <li><b>What OBS shows</b>: both numbers on two lines, both on one line, only the estimated total, or only the confirmed chests. Each choice shows an example with your current numbers.</li>
+  <li><b>Wording</b>: put <code>#</code> where the number goes, e.g. <code>Chests opened: #</code> or <code>Chest Hunt: #/500</code>. For the one-line choice, <code>#C</code> is the confirmed number and <code>#A</code> the estimated total. <b>Original wording</b> brings the default text back.</li>
+  <li><b>Preview</b> shows exactly what the text file will contain. Click <b>Apply</b>: OBS updates at once, even while counting.</li>
+</ul>
+<p>OBS always reads the same file (<code>chest_counter.txt</code>), whatever you choose, so you never change the OBS source. Any text, symbols and emoji work (emoji need an OBS font that has them).</p>
+<div class="note"><b>The app cannot hide a Text source you already added in OBS.</b> If you see a number you did not choose, that source reads a different file: point it at <code>obs_output\chest_counter.txt</code> or hide it. The app&rsquo;s Dashboard always shows both numbers &mdash; that is for you, not for viewers.</div>
+<p><b>Advanced:</b> the same settings live in <code>config.toml</code> under <code>[display]</code>. For separately styled sources, the counter also writes:</p>
 <table>
   <tr><th>File (in <code>obs_output</code>)</th><th>Contains</th></tr>
-  <tr><td><code>chest_counter.txt</code></td><td><b>The one to use:</b> whatever you chose in Configure Counter.bat (all four layouts).</td></tr>
+  <tr><td><code>chest_counter.txt</code></td><td><b>The one to use:</b> whatever you chose on the Overlay page (all four layouts).</td></tr>
   <tr><td><code>chest_status.txt</code></td><td>Legacy: one line with both numbers (or the single number you chose).</td></tr>
   <tr><td><code>certain_chests.txt</code></td><td>Always the confirmed number.</td></tr>
   <tr><td><code>approximate_chests.txt</code></td><td>Always the estimated total.</td></tr>
   <tr><td><code>last_chest.txt</code></td><td>The most recent chest, e.g. <code>CHEST +1 &bull; HIGH</code>.</td></tr>
 </table>
 
-<h2 id="window">The counter window (colours and detail)</h2>
-<p><b style="color:#0f7a4a">Green</b> = certain chest &middot; <b style="color:#9a5b00">yellow</b> = counted in APPROX only &middot; <b style="color:#c0392b">red</b> = looked at but not counted &middot; white on red = an error &middot; cyan = status.
-<code>match 0.94</code> is how closely the pop-up word matched (0&ndash;1), not a percentage or probability.</p>
-<table>
-  <tr><th>Under <code>[console]</code></th><th>Effect</th></tr>
-  <tr><td><code>verbosity = "minimal"</code></td><td>only counted chests, warnings and errors</td></tr>
-  <tr><td><code>verbosity = "normal"</code></td><td>default: also rejected pop-ups and a status line every few seconds</td></tr>
-  <tr><td><code>verbosity = "debug"</code></td><td>everything, with the full reason for each decision</td></tr>
-  <tr><td><code>colors = false</code></td><td>plain white text</td></tr>
-</table>
-<p>These settings only change the window; counting and the logs are always the same.</p>
+<h2 id="activity">Activity panel and live preview (optional)</h2>
+<p>Both are on the Dashboard and are only for you &mdash; showing, hiding or minimising them never changes what is counted.</p>
+<p><b>Activity</b> lists what the counter sees and decides, live:
+<b style="color:#0f7a4a">green</b> = certain chest &middot; <b style="color:#9a5b00">yellow</b> = counted in APPROX only &middot;
+<b style="color:#c0392b">red</b> = looked like a chest pop-up but was not counted. <code>match 0.94</code> is how closely the pop-up word
+matched (0&ndash;1), not a percentage or probability. Switch <b>Normal detail</b> to <b>Debug detail</b> to also see every candidate, the
+full reason for each decision and a status line every few seconds.</p>
+<p><b>Live preview</b> shows the picture the counter is analysing (a few times per second), so you can check that it sees the game
+full screen with the HUD. It is off by default and costs nothing while hidden.</p>
+<p>Everything is also written to the session log in <code>logs\</code>, whether the panels are open or not.</p>
 
 <h2 id="video">Counting a recorded video</h2>
-<p>The counter can also analyse a prerecorded gameplay video (.mp4, .mkv, .mov&hellip;). <b>Drag the video file and drop it onto
-<code>Count Video File.bat</code>.</b> It runs faster than real time, prints each counted chest and a progress line every minute of video,
-and finishes with the CERTAIN and APPROX numbers (APPROX includes CERTAIN). This <b>never changes your live counter</b>; result text files go to
-<code>video_output\</code>. The video should be clean 16:9 gameplay with the normal HUD, in English or Brazilian Portuguese.</p>
+<p>The app can also analyse a prerecorded gameplay video (.mp4, .mkv, .mov&hellip;). On the Dashboard click <b>Analyse a recording&hellip;</b>,
+choose the file and click <b>Start</b>. It runs faster than real time, shows progress and each counted chest, and finishes with the CERTAIN and
+APPROX numbers (APPROX includes CERTAIN). This <b>never changes your live counter</b>; the result text files go to <code>video_output\</code>.
+The video should be clean 16:9 gameplay with the normal HUD, in English or Brazilian Portuguese.</p>
 
 <h2 id="start">Already opened chests? Set a starting count</h2>
-<p>Double-click <b>Set Starting Count.bat</b>, type how many chests you have already opened (for example <code>150</code>) and press Enter.</p>
-<pre>Starting count set:
-  CERTAIN OPENED CHESTS: 0
-  APPROX. OPENED CHESTS: 150</pre>
+<p>On the Dashboard click <b>Edit counts&hellip;</b>, enter how many chests you have already opened (for example <code>150</code>) as
+<b>Chests opened (APPROX)</b>, leave <b>Confirmed chests (CERTAIN)</b> at 0 and click <b>Save</b>.</p>
 <p>APPROX starts at your number and new chests are added on top. CERTAIN starts at 0, because the counter did not see the earlier chests.
-A wrong entry (negative, decimals, letters, more than 1,000,000) is refused and nothing changes; an empty Enter cancels. It works while the counter window is open.</p>
+The same window corrects a wrong count. It works while counting: the counter picks up the new numbers within a second.</p>
 
 <h2 id="reset">Reset the counter (e.g. at the start of a stream)</h2>
-<p>Double-click <b>Reset Counter.bat</b>. It prints</p>
-<pre>Counter reset:
-  CERTAIN: 0
-  APPROX: 0</pre>
-<p>and waits for a key. It works even while the counter window is open &mdash; the open window picks up the new zeros within a second.
-<b>Show Counter.bat</b> displays the current numbers without changing anything. Closing and reopening the counter does <b>not</b> reset it; your totals continue.</p>
+<p>On the Dashboard click <b>Reset&hellip;</b> and confirm. Both numbers go to 0, also while counting. Closing and reopening the app does
+<b>not</b> reset anything; your totals continue.</p>
 
 <h2 id="settings">Settings (optional)</h2>
-<p><b>Most people never need to change anything.</b> The defaults work. If you want to change labels, languages or similar, copy
-<code>config.example.toml</code> to <code>config.toml</code>, edit it with Notepad (every option is explained inside), save, and restart the counter.
+<p><b>Most people never need to change anything.</b> The <b>Settings</b> page has the Fortnite language(s) (ticking only yours gives slightly
+fewer false alarms) and the session logs, including small pictures of every chest pop-up for reporting misses. Changes are used the next time
+you click Start counting.</p>
+<p><b>Advanced:</b> everything else is in <code>config.toml</code> (Settings &rarr; <b>Open config.toml</b>; every option is explained inside).
 A mistake in the file only produces a warning and the default is used for that option.</p>
 <table>
   <tr><th>Option</th><th>What it does</th></tr>
-  <tr><td><code>languages</code></td><td>Fortnite language(s). <code>["en"]</code> or <code>["pt"]</code> removes the other language&rsquo;s lookalikes.</td></tr>
   <tr><td><code>certain_min_tier</code></td><td><code>"CERTAIN"</code> makes the CERTAIN number stricter (lower).</td></tr>
   <tr><td><code>count_*_as_approx</code></td><td>Switch the weaker kinds of evidence on/off for APPROX.</td></tr>
-  <tr><td><code>certain_label</code>, <code>approximate_label</code></td><td>The words in front of the numbers.</td></tr>
-  <tr><td><code>use_thousands_separator</code></td><td><code>1,232</code> or <code>1232</code>.</td></tr>
-  <tr><td><code>process_fps</code></td><td>Frames analysed per second (default 15).</td></tr>
-  <tr><td><code>logging</code></td><td>Turn session logs on/off.</td></tr>
+  <tr><td><code>process_fps</code></td><td>Pictures analysed per second (default 15).</td></tr>
 </table>
 
 <h2 id="update">Updating to a new version</h2>
@@ -269,32 +242,33 @@ A mistake in the file only produces a warning and the default is used for that o
 <table>
   <tr><th>Keep</th><th>What it is</th></tr>
   <tr><td><code>state\</code></td><td>Your saved counts.</td></tr>
-  <tr><td><code>config.toml</code></td><td>Your settings (if you made one).</td></tr>
+  <tr><td><code>config.toml</code></td><td>Your settings (if any were changed).</td></tr>
   <tr><td><code>logs\</code></td><td>Session logs (optional to keep).</td></tr>
   <tr><td><code>obs_output\</code></td><td>The text files OBS reads (they are re-created automatically).</td></tr>
 </table>
-<p><b>Easiest update:</b> close the counter, then extract the new zip <b>into the same folder</b> and choose &ldquo;Replace the files&rdquo;. The zip never contains your counts or <code>config.toml</code>, so they are untouched.
-Afterwards double-click <b>Show Counter.bat</b> once so the OBS text files show your real numbers again (the zip contains blank placeholders).
-If you extract to a new folder instead, copy <code>state\</code> and <code>config.toml</code> across, and re-point the two OBS text sources to the new <code>obs_output</code> folder.</p>
-<p><b>Coming from v0.1.0:</b> after extracting, delete the old <code>Fortnite Visual Chest Counter.exe</code> from the folder (v0.1.1 starts from the .bat files and has no .exe). Your counts, settings and OBS sources keep working.</p>
+<p><b>Easiest update:</b> close the app, then extract the new zip <b>into the same folder</b> and choose &ldquo;Replace the files&rdquo;. The zip never contains your counts or <code>config.toml</code>, so they are untouched.
+Opening the app afterwards writes your real numbers back into the OBS text files (the zip contains blank placeholders).
+If you extract to a new folder instead, copy <code>state\</code> and <code>config.toml</code> across, and re-point the OBS text source to the new <code>obs_output</code> folder.</p>
+<p><b>Coming from v0.1.x:</b> after extracting, delete the old <code>.bat</code> and <code>.cmd</code> files from the folder &mdash; v0.2.0 is one app,
+<b>Fortnite Visual Chest Counter.exe</b>. Your counts, settings and OBS sources keep working.</p>
 
 <h2 id="help">Troubleshooting</h2>
 <table>
   <tr><th>Problem</th><th>Fix</th></tr>
-  <tr><td>&ldquo;OBS Virtual Camera was not found&rdquo;</td><td>Open OBS Studio (version 28+) and click <b>Start Virtual Camera</b>, then start the counter again.</td></tr>
+  <tr><td>&ldquo;OBS Virtual Camera was not found&rdquo;</td><td>Open OBS Studio (version 28+) and click <b>Start Virtual Camera</b>, then click <b>Start counting</b> again.</td></tr>
   <tr><td>&ldquo;exists but is not sending video&rdquo;</td><td>Click <b>Start Virtual Camera</b> again; check the ChestDetectorFeed scene actually shows the game (not black).</td></tr>
-  <tr><td>The number never changes</td><td>Is the picture 16:9 and the HUD visible? Does the chest popup (&ldquo;CHEST&rdquo; / &ldquo;BA&Uacute;&rdquo;) appear in ChestDetectorFeed? Webcam/alerts covering the HUD hide it. Run <b>Diagnostics.bat</b>.</td></tr>
-  <tr><td>&ldquo;already running in another window&rdquo;</td><td>Only one counter can run at a time. Use the window that is already open.</td></tr>
-  <tr><td>It missed a chest / counted something wrong</td><td>Help improve it: in <code>config.toml</code> set <code>save_snapshots = true</code> under <code>[logging]</code>. Each pop-up the counter considered is then saved as a small picture in <code>logs\snapshots\</code> (only the pop-up area, nothing else). Send the pictures of the misses with the session log from <code>logs\</code>.</td></tr>
-  <tr><td>Text in OBS is blank or not updating</td><td>In the Text source tick <b>Read from file</b> and check it points to the <code>obs_output</code> folder of the counter you are running.</td></tr>
-  <tr><td>Wrong numbers / want to fix by hand</td><td>Use <b>Set Starting Count.bat</b> to enter the right total, or <b>Reset Counter.bat</b> for 0.</td></tr>
-  <tr><td>Anything else</td><td>Double-click <b>Diagnostics.bat</b>, then copy its output (also saved to <code>logs\diagnostics.txt</code>) into your message. If the program ever crashes it saves <code>logs\crash_*.txt</code> &mdash; send that too.</td></tr>
+  <tr><td>The number never changes</td><td>Turn on <b>Live preview</b>: is the picture 16:9, full screen, with the HUD visible? Does the chest pop-up (&ldquo;CHEST&rdquo; / &ldquo;BA&Uacute;&rdquo;) appear in ChestDetectorFeed? Webcam/alerts covering the HUD hide it.</td></tr>
+  <tr><td>&ldquo;already running in another window&rdquo; / &ldquo;already open&rdquo;</td><td>Only one counter can run at a time. Use the one that is already open (look in the taskbar).</td></tr>
+  <tr><td>It missed a chest / counted something wrong</td><td>Help improve it: on the <b>Settings</b> page tick <b>Also save a small picture of every chest pop-up</b>. Each pop-up the counter considered is then saved in <code>logs\snapshots\</code> (only the pop-up area, nothing else). Send the pictures of the misses with the session log from <code>logs\</code>.</td></tr>
+  <tr><td>Text in OBS is blank or not updating</td><td>In the Text source tick <b>Read from file</b> and check it points to the file shown on the app&rsquo;s <b>Overlay</b> page.</td></tr>
+  <tr><td>Wrong numbers / want to fix by hand</td><td><b>Edit counts&hellip;</b> on the Dashboard, or <b>Reset&hellip;</b> for 0.</td></tr>
+  <tr><td>Anything else</td><td>Open <b>Help &amp; diagnostics</b> &rarr; <b>Run diagnostics</b> &rarr; <b>Copy report</b> and paste it into your message (it is also saved to <code>logs\diagnostics.txt</code>). If something ever crashes it saves <code>logs\crash_*.txt</code> &mdash; send that too.</td></tr>
 </table>
 
 <h2 id="compat">Fortnite compatibility</h2>
-<p>This version (v0.1.1) was developed and live-tested during <b>Fortnite Chapter 7 Season 5</b> (November 2026); its automated tests also use recordings of earlier gameplay.
+<p>The chest detection in v0.2.0 is the same as in v0.1.1, which was developed and live-tested during <b>Fortnite Chapter 7 Season 5</b> (November 2026); its automated tests also use recordings of earlier gameplay.
 It recognises Fortnite&rsquo;s on-screen chest pop-up and HUD elements, which Epic Games can change in any update.
-If chests stop being counted after a Fortnite update, please report it on the project&rsquo;s GitHub page (Issues: <code>https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues</code>) with the <b>Diagnostics.bat</b> output.</p>
+If chests stop being counted after a Fortnite update, please report it on the project&rsquo;s GitHub page (Issues: <code>https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues</code>) with the diagnostics report.</p>
 
 <h2 id="limits">Known limitations (please read)</h2>
 <ul>
@@ -307,11 +281,12 @@ If chests stop being counted after a Fortnite update, please report it on the pr
 </ul>
 
 <h2>Privacy and safety</h2>
-<p>The counter makes <b>no internet connection</b> and sends nothing anywhere. It only reads video frames from the OBS Virtual Camera
-(or the capture device you pick) and writes text files and logs in its own folder. It does not inject into, read memory from or modify Fortnite.</p>
+<p>The app makes <b>no internet connection</b> and sends nothing anywhere. It only reads video frames from the OBS Virtual Camera
+(or the source you pick) and writes text files and logs in its own folder. The live preview is shown only in the app on your screen; it is
+never saved or sent. It does not inject into, read memory from or modify Fortnite.</p>
 
 <h2>Credits &amp; licenses</h2>
-<p>Fortnite Visual Chest Counter is free, open-source software (MIT License, see <code>LICENSE.txt</code>). It bundles FFmpeg (LGPL v3, unmodified), Python, NumPy and SciPy under their own licenses: see <code>LICENSE-NOTICE.txt</code>, <code>runtime\licenses\</code> and <code>runtime\ffmpeg\FFMPEG-NOTICE.txt</code>.
+<p>Fortnite Visual Chest Counter is free, open-source software (MIT License, see <code>LICENSE.txt</code>). It bundles FFmpeg (LGPL v3, unmodified), Qt for Python / Qt (LGPL v3, unmodified), Python, NumPy and SciPy under their own licenses: see <code>LICENSE-NOTICE.txt</code>, <code>runtime\licenses\</code> and <code>runtime\ffmpeg\FFMPEG-NOTICE.txt</code>.
 Not affiliated with or endorsed by Epic Games. Source code and more help: this project&rsquo;s GitHub page. Fortnite is a trademark of Epic Games, Inc.</p>
 
 </main>

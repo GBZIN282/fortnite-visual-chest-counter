@@ -25,6 +25,7 @@ import time
 
 import numpy as np
 
+from fortnite_chest_counter import paths
 from fortnite_chest_counter.detection import visual as V
 
 WIDTH, HEIGHT = V.NORMALIZED_WIDTH, V.NORMALIZED_HEIGHT
@@ -34,7 +35,8 @@ FRAME_BYTES = WIDTH * HEIGHT * 3
 def list_video_devices():
     """DirectShow video devices as [(name, kind)], kind in video/audio/none."""
     out = subprocess.run(["ffmpeg", "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
-                         capture_output=True).stderr.decode("utf-8", errors="replace")
+                         capture_output=True, stdin=paths.child_stdin(), creationflags=paths.child_process_flags())
+    out = out.stderr.decode("utf-8", errors="replace")
     return [(m[1], m[2]) for m in re.finditer(r'"([^"]+)" \((video|audio|none)\)', out)
             if "Alternative name" not in m[0]]
 
@@ -79,7 +81,8 @@ class LiveSource:
     def open(self, timeout=20.0):
         cmd = (["ffmpeg", "-hide_banner", "-loglevel", "info"] + self.input_args +
                ["-vf", f"scale={WIDTH}:{HEIGHT},fps={self.fps}", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
-        self._process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=10 ** 8)
+        self._process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=10 ** 8,
+                                         stdin=paths.child_stdin(), creationflags=paths.child_process_flags())
         self._t0 = time.monotonic()
         self._err_thread = threading.Thread(target=self._read_stderr, daemon=True)
         self._err_thread.start()
@@ -170,7 +173,7 @@ def make_source(kind, fps, device=None, monitor=1, video=None, start=0.0, durati
     if kind in ("obs-camera", "device"):
         name = "OBS Virtual Camera" if kind == "obs-camera" else device
         if not name:
-            raise ValueError("source 'device' needs a device name: set [live] device in config.toml (Diagnostics lists the names)")
+            raise ValueError("source 'device' needs a device name: pick it in the app, or set [live] device in config.toml (diagnostics lists the names)")
         return LiveSource(f"{kind}: {name}", ["-fflags", "nobuffer", "-f", "dshow", "-rtbufsize", "64M", "-i", f"video={name}"], fps)
     if kind == "desktop":
         monitors = list_monitors()

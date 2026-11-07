@@ -19,7 +19,26 @@ No detection changes. Notes: [RELEASE_NOTES_v0.1.1.md](RELEASE_NOTES_v0.1.1.md).
 - Release runs on the official python.org embeddable Python (signed), no self-built executable; reproducible zip,
   `runtime/PROVENANCE.txt`.
 
+## v0.2.0 - Desktop app (in development on branch `dev/v0.2.0`, not released)
+
+No detection changes. Draft notes: [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md). Trust/signing analysis:
+[WINDOWS_TRUST.md](WINDOWS_TRUST.md).
+
+Done (dev build): one PySide6 app replacing every `.bat` (Dashboard with source list + Start/Stop, optional activity panel
+with Normal/Debug detail, optional live preview, Overlay page, Edit counts / Reset, Analyse a recording, Settings, Help &
+diagnostics); counting stays in the separate `live --gui` worker; small reproducible launcher exe; trimmed signed Qt files;
+signature report per build; tests in `tests/test_app.py`.
+
+Before release:
+1. The user's hands-on test of the app with OBS (single PC), then the two-PC / Wi-Fi tests.
+2. Smart App Control: read PC B's CodeIntegrity log (which file is refused); decide on signing (see WINDOWS_TRUST.md).
+3. Rewrite the top-level `README.md` for the app (it still describes the v0.1.1 `.bat` workflow); final build + scan.
+4. Optional, separate change: replace `scipy.signal.fftconvolve` with NumPy (-107 unsigned files, -30 MB) only if the
+   regression harness shows identical events.
+
 ## v0.1.2 candidates - video inputs (not implemented yet)
+
+The source picker (item 1) is now part of the v0.2.0 app's video source list.
 
 Input layer only; the detector stays frozen. Rationale and measurements: [INPUT_OPTIONS.md](INPUT_OPTIONS.md).
 

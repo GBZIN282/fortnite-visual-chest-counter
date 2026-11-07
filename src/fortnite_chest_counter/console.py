@@ -18,8 +18,13 @@ Verbosity:
 Colours use ANSI escape codes, enabled on Windows 10/11 consoles (Command Prompt and Windows Terminal) with
 ENABLE_VIRTUAL_TERMINAL_PROCESSING. They are switched off automatically when the output is not a console (redirected
 to a file, tests) or when NO_COLOR is set, so the plain text always stays readable.
+
+Machine mode (`live --gui` / `video --gui`, the desktop app's counting worker): every message is ONE JSON object per line
+on stdout instead of text - {"type": "event" | "status" | "info" | "warn" | "error" | "line" | ..., ...}. Every detection
+decision is sent whatever the verbosity; the app filters what it shows. Still presentation only.
 """
 
+import json
 import os
 import sys
 import time
@@ -78,19 +83,49 @@ def _evidence(ev):
     return f"prompt {ev.get('interaction_score', 0):.2f}"
 
 
+def _jsonable(value):
+    return value.item() if hasattr(value, "item") else str(value)
+
+
+def event_message(ev, certain_text, approx_text, certain=None, approx=None):
+    """The machine-mode form of one detection decision (what the desktop app's activity panel shows)."""
+    counted_certain, counted_approx = bool(ev.get("certain_counted")), bool(ev.get("approx_counted"))
+    return {"verdict": "certain" if counted_certain else "approx" if counted_approx else "rejected",
+            "generic": ev.get("source") == "interaction_object" and not (counted_certain or counted_approx),
+            "clock": time.strftime("%H:%M:%S"), "why": _why(ev), "evidence": _evidence(ev),
+            "event_id": ev.get("event_id", ""), "stamp": ev.get("stamp", ""), "source": ev.get("source", ""),
+            "tier": ev.get("adjusted_tier", ""), "latency_s": ev.get("latency_s"), "reason": ev.get("reason", ""),
+            "certain_text": certain_text, "approx_text": approx_text, "certain": certain, "approx": approx}
+
+
 class Console:
     def __init__(self):
         self.verbosity, self.colors = "normal", False
+        self.machine = False                            # JSON lines for the desktop app (set once, never by configure)
 
     def configure(self, verbosity="normal", colors=True, stream=None):
         self.verbosity = verbosity if verbosity in VERBOSITY else "normal"
-        self.colors = bool(colors) and "NO_COLOR" not in os.environ and _enable_windows_ansi(stream or sys.stdout)
+        self.colors = (not self.machine and bool(colors) and "NO_COLOR" not in os.environ
+                       and _enable_windows_ansi(stream or sys.stdout))
 
     # ---- low level
     def paint(self, text, style):
         return f"\x1b[{_CODES[style]}m{text}\x1b[0m" if self.colors and style else text
 
+    def emit(self, kind, /, **data):
+        """Machine mode only: one JSON message on its own line. A no-op in the text console."""
+        if not self.machine:
+            return
+        try:
+            print(json.dumps({"type": kind, **data}, ensure_ascii=True, default=_jsonable), flush=True)
+        except (OSError, ValueError):
+            pass                                        # the app closed the pipe: never disturb counting
+
     def line(self, text="", style=None):
+        if self.machine:
+            if text:
+                self.emit("line", text=str(text), style=style)
+            return
         try:
             print(self.paint(text, style) if text else text, flush=True)
         except (OSError, ValueError):
@@ -98,23 +133,35 @@ class Console:
 
     # ---- message types
     def info(self, text):
+        if self.machine:
+            return self.emit("info", text=str(text))
         self.line(text, "cyan")
 
     def warn(self, text):
+        if self.machine:
+            return self.emit("warn", text=str(text))
         self.line(f"{self.paint('WARNING', 'magenta')}: {text}" if self.colors else f"WARNING: {text}")
 
     def error(self, text):
+        if self.machine:
+            return self.emit("error", text=str(text))
         first, _, rest = str(text).partition("\n")
         self.line(f"{self.paint(' ERROR ', 'error')} {self.paint(first, 'red')}" if self.colors else f"ERROR: {first}")
         if rest:
             self.line(rest)
 
-    def status(self, text):
+    def status(self, text, **data):
+        """A periodic status line; `data` = the same numbers for machine mode (fps, dropped, ...)."""
+        if self.machine:
+            return self.emit("status", text=str(text), **data)
         if self.verbosity != "minimal":
             self.line(f"{time.strftime('%H:%M:%S')}  {self.paint('[STATUS ]', 'cyan')}  {text}")
 
-    def event(self, ev, certain_text, approx_text):
-        """One detection decision. `certain_text` / `approx_text` = the running totals, already formatted."""
+    def event(self, ev, certain_text, approx_text, certain=None, approx=None):
+        """One detection decision. `certain_text` / `approx_text` = the running totals, already formatted
+        (`certain` / `approx` = the same as integers, used only in machine mode)."""
+        if self.machine:
+            return self.emit("event", **event_message(ev, certain_text, approx_text, certain, approx))
         certain, approx = ev.get("certain_counted"), ev.get("approx_counted")
         if not (certain or approx):
             if self.verbosity == "minimal":

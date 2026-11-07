@@ -1,0 +1,18 @@
+Qt for Python (PySide6) - the desktop app's window toolkit
+==========================================================
+
+The window of Fortnite Visual Chest Counter is made with Qt for Python (PySide6 + Shiboken6) {version} and the Qt {version}
+libraries, (c) The Qt Company Ltd. and other contributors. They are used under the GNU Lesser General Public License
+version 3 (LGPL-3.0-only); the licence texts are LGPL-3.0.txt and GPL-3.0.txt next to this file.
+
+The files are the unmodified ones from the official PyPI wheels PySide6-Essentials {version} and shiboken6 {version}
+(signed by The Qt Company Oy). Only the parts this app needs are included: the QtCore, QtGui and QtWidgets modules
+and the Windows platform plugin (runtime\lib\PySide6, runtime\lib\shiboken6).
+They are separate, dynamically loaded libraries: you may replace them with your own compatible build of the same modules.
+
+Corresponding source code
+-------------------------
+  Qt for Python (PySide6 / Shiboken6) : https://code.qt.io/cgit/pyside/pyside-setup.git/tag/?h=v{version}
+                                        https://download.qt.io/official_releases/QtForPython/
+  Qt {version}                         : https://download.qt.io/official_releases/qt/
+  Project page                        : https://www.qt.io/qt-for-python

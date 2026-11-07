@@ -4,7 +4,8 @@ simulation on a recorded video, and the LIVE mode for OBS / capture card / deskt
 
     frame source  ->  estimator.ChestEstimator  ->  counter state  ->  OBS text files + log
 
-Windows release: the .bat launchers run the bundled official Python: runtime/python/python.exe -m fortnite_chest_counter <command>.
+Windows release: "Fortnite Visual Chest Counter.exe" opens the desktop app (gui/), which runs the `live` command below as
+its worker. Every command also works directly: runtime/python/python.exe -m fortnite_chest_counter <command>.
 Developers: the same commands via `python -m fortnite_chest_counter ...`.
 
 Commands
@@ -344,9 +345,15 @@ class CounterSession:
                             "obs_write_s": round(write_s, 4), "logged_at": now_iso()},
                            counted=bool(certain_inc or approx_inc))
             if not quiet:
-                CONSOLE.event(ev, self.fmt(st["certain"]), self.fmt(st["approximate"]))
+                CONSOLE.event(ev, self.fmt(st["certain"]), self.fmt(st["approximate"]), st["certain"], st["approximate"])
             applied.append(ev)
         return applied
+
+    def announce(self):
+        """Machine mode: tell the desktop app the current numbers and exactly what the OBS file shows."""
+        CONSOLE.emit("counts", certain=self.state["certain"], approx=self.state["approximate"],
+                     certain_text=self.fmt(self.state["certain"]), approx_text=self.fmt(self.state["approximate"]),
+                     overlay=overlay_text(self.display, self.state))
 
 
 # ==================================================================
@@ -365,7 +372,7 @@ def config_path(args):
 
 
 class DisplayConfigWatcher:
-    """Configure Counter.bat (or Notepad) edits config.toml while the counter runs: re-read [display] and [console]
+    """The app's Overlay page / the configure command (or Notepad) edit config.toml while the counter runs: re-read [display] and [console]
     within a second and rewrite the OBS files, so the overlay changes without a restart. Detector settings still need a
     restart (they are not touched here)."""
 
@@ -392,6 +399,7 @@ class DisplayConfigWatcher:
         CONSOLE.configure(cfg["console"]["verbosity"], cfg["console"]["colors"])
         session.write_obs()
         CONSOLE.info("Overlay settings changed - " + overlay_summary(session.display, session.state, session.obs_dir)[0])
+        session.announce()
         return True
 
 
@@ -425,7 +433,8 @@ class Mp4FrameSource:
         if self.until is not None:
             cmd += ["-t", f"{self.until - self.start:.3f}"]
         cmd += ["-vf", f"{V.scale_filter()},fps={self.fps}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=10 ** 8)
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=10 ** 8, stdin=paths.child_stdin(),
+                                   creationflags=paths.child_process_flags())
         size = V.NORMALIZED_WIDTH * V.NORMALIZED_HEIGHT * 3
         i = 0
         while True:
@@ -561,7 +570,7 @@ def cmd_video(args):
     banner()
     video = Path(args.video)
     if not video.is_file():
-        raise UserError(f"Video file not found: {video}\nDrag a video file (.mp4, .mkv, .mov ...) onto 'Count Video File.bat'.")
+        raise UserError(f"Video file not found: {video}\nChoose an existing video file (.mp4, .mkv, .mov ...).")
     cfg, origin = make_config(args)
     cfg["state"]["persist"] = False                     # a recording must never change the live counter
     cfg["state"]["obs_dir"] = args.obs_dir or "video_output"
@@ -570,10 +579,16 @@ def cmd_video(args):
     state = session.state
     fps = cfg["detector"]["process_fps"]
     start = args.start or 0.0
-    print(f"Analysing {video.name} (settings: {origin}). This runs faster than real time; leave the window open.")
+    gui = getattr(args, "gui", False)
+    control = AppControl() if gui else None                 # the desktop app's Stop button
+    if gui:
+        CONSOLE.emit("video_start", name=video.name, duration=video_duration(video), start=start, until=args.until)
+    else:
+        print(f"Analysing {video.name} (settings: {origin}). This runs faster than real time; leave the window open.")
     est = estimator.ChestEstimator()
     source = Mp4FrameSource(video, fps, start, args.until)
-    wall0, last_t, frames, next_report = time.time(), start, 0, start + 60.0
+    wall0, last_t, frames, next_report, next_progress = time.time(), start, 0, start + 60.0, 0.0
+    stopped_early = False
     try:
         for t, frame in source.frames():
             last_t, frames = t, frames + 1
@@ -581,17 +596,42 @@ def cmd_video(args):
             if t >= next_report:
                 CONSOLE.status(f"{mmss(t)} of video analysed | CERTAIN {session.fmt(state['certain'])} | APPROX {session.fmt(state['approximate'])}")
                 next_report += 60.0
+            if gui and time.monotonic() >= next_progress:
+                CONSOLE.emit("progress", t=round(t, 1), certain=state["certain"], approx=state["approximate"])
+                next_progress = time.monotonic() + 0.5
+            if control is not None and control.requested.is_set():
+                stopped_early = True
+                break
         session.apply(est.flush(), last_t)
     except KeyboardInterrupt:
+        stopped_early = True
         print("\nStopped early; the numbers below cover only the part already analysed.")
     if frames == 0:
         raise UserError("No picture could be read from this file. Is it a video that your PC can play? "
                         "(Details are printed just above if FFmpeg reported a problem.)")
     session.write_obs()
+    if gui:
+        CONSOLE.emit("finished", certain=state["certain"], approx=state["approximate"], analysed=mmss(last_t),
+                     analysed_s=round(last_t - start, 1), minutes=round((time.time() - wall0) / 60, 1),
+                     stopped_early=stopped_early, obs_dir=str(session.obs_dir.resolve()))
+        return
     CONSOLE.line(f"\nFinished: {mmss(last_t)} of video analysed in {(time.time() - wall0) / 60:.1f} min.\n", "bold")
     show_counts(session)
     print("\n  APPROX is the estimated TOTAL and already includes the CERTAIN chests (do not add them together).")
     print(f"  Text files saved in: {session.obs_dir.resolve()}")
+
+
+def video_duration(path):
+    """Length of a video file in seconds, from FFmpeg's own report (no ffprobe needed), or None."""
+    import re
+    try:
+        report = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(path)], capture_output=True, timeout=30,
+                                stdin=paths.child_stdin(),
+                                creationflags=paths.child_process_flags()).stderr.decode("utf-8", errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = re.search(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)", report)
+    return int(found[1]) * 3600 + int(found[2]) * 60 + float(found[3]) if found else None
 
 
 # ---- friendly-message building blocks -------------------------------------------------
@@ -729,6 +769,48 @@ class ConsoleCloseGuard:
         self.done.set()
 
 
+class AppControl:
+    """
+    `--gui`: the desktop app runs this command as a worker without a console and controls it through stdin. A line "stop",
+    or the end of stdin (the app closed, crashed or was ended in Task Manager - Windows then closes the pipe), means:
+    stop and save, exactly like pressing Q in the console. Same interface as ConsoleCloseGuard (`requested`, `reason`,
+    `on_request`), but a normal stop: final events are still reported and nothing is rushed.
+    """
+
+    def __init__(self, stream=None):
+        import threading
+        self.requested = threading.Event()
+        self.reason = "stopped in the app"
+        self.on_request = None
+        self._stream = stream if stream is not None else sys.stdin
+        threading.Thread(target=self._read, daemon=True, name="app-control").start()
+
+    def _read(self):
+        try:
+            for line in self._stream:
+                if line.strip().lower() in ("stop", "quit"):
+                    break
+            else:
+                self.reason = "the app closed"
+        except Exception:
+            self.reason = "the app closed"
+        self.request()
+
+    def request(self):
+        self.requested.set()
+        if self.on_request:
+            try:
+                self.on_request()
+            except Exception:
+                pass
+
+    def attach(self, stop_source):
+        """Make a stop request reach `stop_source` (also one that arrived before the source existed)."""
+        self.on_request = stop_source
+        if self.requested.is_set():
+            stop_source()
+
+
 class SingleInstance:
     """
     Two live counters sharing one counter file would fight, so a second one is refused. The lock is a Windows named
@@ -790,7 +872,8 @@ def explain_source_failure(kind, label, error_text):
                 f"  3. Run {APP_NAME} again")
     if kind == "device":
         return (f"Could not open the video device ({label}).\n\n"
-                "  - Run Diagnostics.bat to see the exact device names, then set [live] device in config.toml\n"
+                "  - Pick the device again in the app's Video source list (Refresh lists them), or run the\n"
+                "    diagnostics to see the exact device names\n"
                 "  - Many capture cards can only be used by ONE program at a time. If OBS is already using it, "
                 "use the normal OBS Virtual Camera mode instead (recommended).")
     if kind == "desktop":
@@ -817,6 +900,12 @@ def cmd_live(args):
     live = cfg["live"]
     kind, fps = live["source"], cfg["detector"]["process_fps"]
     preflight(cfg)
+    if getattr(args, "gui", False):
+        # desktop-app worker: no console; the app's Stop button / closing the app arrives through stdin
+        control = AppControl()
+        with SingleInstance(cfg["state"]["path"]):
+            _run_live(args, cfg, origin, live, kind, fps, estimator, sources, control=control)
+        return
     disable_quick_edit()
     # exit order: the lock is removed first, then the close guard lets Windows end the process
     with ConsoleCloseGuard() as guard, SingleInstance(cfg["state"]["path"]):
@@ -826,7 +915,20 @@ def cmd_live(args):
 STATUS_LOG_SECONDS = 300            # a status record in the session log every 5 min (survives a hard kill)
 
 
-def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None):
+def _open_preview(args):
+    """`--preview NAME` (desktop app): the shared-memory picture for its optional live preview. Never fatal."""
+    name = getattr(args, "preview", None)
+    if not name:
+        return None
+    try:
+        from fortnite_chest_counter.preview import PreviewWriter
+        return PreviewWriter(name)
+    except Exception as error:                              # the preview is optional; counting is not
+        CONSOLE.warn(f"live preview unavailable ({error}); counting is not affected")
+        return None
+
+
+def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None, control=None):
     session = CounterSession(cfg, reset=args.reset)
     state = session.state
     try:
@@ -834,33 +936,46 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                                      video=args.video, start=args.start or 0.0, duration=args.duration)
     except ValueError as error:
         raise UserError(str(error))
+    if control is not None:
+        control.attach(source.request_stop)
     CONSOLE.info(f"Connecting to {source.label} ...")
     try:
         info = source.open(timeout=15.0)
     except (RuntimeError, OSError) as error:
+        if control is not None and control.requested.is_set():
+            return                                          # the app cancelled while connecting: nothing to report
         raise UserError(explain_source_failure(kind, source.label, str(error))) from error
     res, in_fps = info["input_resolution"], info["input_fps"]
     CONSOLE.info((f"Connected: video {res[0]}x{res[1]} @ {in_fps} fps" if res else "Connected.")
                  + f" -> analysed at {fps} frames per second")
     friendly_rate_note(res)
-    print(f"Settings: {origin}")
-    print("Counter: " + (f"continuing from {session.fmt(state['certain'])} certain / {session.fmt(state['approximate'])} approx"
-                         if session.loaded_existing else "starting at 0 / 0")
-          + ("" if session.persist else " (saving is turned off in config.toml)"))
-    viewers, obs_file = overlay_summary(session.display, state, session.obs_dir)
-    CONSOLE.line(viewers, "bold")
-    CONSOLE.line(f"{obs_file}   (change what viewers see: Configure Counter.bat)")
-    CONSOLE.line("This window always shows both numbers for you; viewers only see the file above.", "dim")
-    print("Counting has started. Counts are kept when you stop and restart.")
-    print("To stop: press Q in this window (or Ctrl+C, or just close the window). Nothing is lost.")
-    CONSOLE.line(f"Window: {CONSOLE.verbosity} detail, colours {'on' if CONSOLE.colors else 'off'} ([console] in config.toml)\n", "dim")
+    if control is not None:
+        CONSOLE.emit("connected", source=source.label, kind=kind, resolution=res, input_fps=in_fps, process_fps=fps,
+                     settings=origin, continuing=session.loaded_existing, persist=session.persist,
+                     obs_file=str((session.obs_dir / "chest_counter.txt").resolve()),
+                     log=str(session.log.path) if session.log.path else None)
+        session.announce()
+    else:
+        print(f"Settings: {origin}")
+        print("Counter: " + (f"continuing from {session.fmt(state['certain'])} certain / {session.fmt(state['approximate'])} approx"
+                             if session.loaded_existing else "starting at 0 / 0")
+              + ("" if session.persist else " (saving is turned off in config.toml)"))
+        viewers, obs_file = overlay_summary(session.display, state, session.obs_dir)
+        CONSOLE.line(viewers, "bold")
+        CONSOLE.line(f"{obs_file}   (change what viewers see: the app's Overlay page, or the configure command)")
+        CONSOLE.line("This window always shows both numbers for you; viewers only see the file above.", "dim")
+        print("Counting has started. Counts are kept when you stop and restart.")
+        print("To stop: press Q in this window (or Ctrl+C, or just close the window). Nothing is lost.")
+        CONSOLE.line(f"Window: {CONSOLE.verbosity} detail, colours {'on' if CONSOLE.colors else 'off'} ([console] in config.toml)\n", "dim")
 
     est = estimator.ChestEstimator()
+    preview = _open_preview(args)
     session.save()
     session.write_obs()
     session.log.write({"event": "session_start", "app_version": __version__, "source_type": kind, "source": source.label,
                        "input_resolution": res, "input_fps": in_fps, "normalized": [sources.WIDTH, sources.HEIGHT],
-                       "process_fps": fps, "session_started": now_iso(), "config": origin})
+                       "process_fps": fps, "session_started": now_iso(), "config": origin,
+                       "ui": "app" if control is not None else "console"})
     interval = live["status_interval_seconds"]
     recent = deque(maxlen=300)                              # bounded: a 12-hour stream must not grow memory
     n_frames, total_s, max_s = 0, 0.0, 0.0
@@ -875,6 +990,9 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
         for t, frame in source.frames():
             if guard is not None and guard.requested.is_set():
                 break
+            if control is not None and control.requested.is_set():
+                stop_reason = control.reason
+                break
             if args.duration and t >= args.duration:          # applies to every source type
                 stop_reason = "duration reached"
                 break
@@ -883,8 +1001,10 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
             dt = time.perf_counter() - t0
             recent.append(dt)
             n_frames, total_s, max_s = n_frames + 1, total_s + dt, max(max_s, dt)
+            if preview is not None:
+                preview.offer(t, frame)                     # after counting; skipped unless the app shows the preview
             now_m = time.monotonic()
-            if quit_requested():
+            if control is None and quit_requested():
                 stop_reason = "Q pressed"
                 break
             if now_m - last_sync >= 1.0:
@@ -892,13 +1012,17 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                 if session.sync_external_changes():
                     CONSOLE.info(f"Counter changed by Reset / Set Starting Count -> CERTAIN {session.fmt(state['certain'])} | "
                                  f"APPROX {session.fmt(state['approximate'])}")
+                    session.announce()
                 watcher.check(session)
             if now_m - last_status >= interval:
                 span = now_m - last_status
                 det_fps = (source.frames_processed - processed_at_status) / span
                 CONSOLE.status(f"{det_fps:4.1f} fps (source {in_fps or '?'}) | dropped {session.fmt(source.frames_dropped)} "
                                f"| {1000 * np.mean(recent):.0f} ms/frame | CERTAIN {session.fmt(state['certain'])} "
-                               f"| APPROX {session.fmt(state['approximate'])}")
+                               f"| APPROX {session.fmt(state['approximate'])}",
+                               fps=round(det_fps, 1), source_fps=in_fps, dropped=source.frames_dropped,
+                               ms_per_frame=round(1000 * float(np.mean(recent)), 1),
+                               certain=state["certain"], approx=state["approximate"])
                 last_status, processed_at_status = now_m, source.frames_processed
             if now_m - last_status_log >= STATUS_LOG_SECONDS:
                 span = now_m - last_status_log
@@ -914,6 +1038,8 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                 # Closing the window sends the close event to every process in it; FFmpeg usually exits first, so
                 # the video "ends" a moment before our own handler runs. Give it a moment to tell the two apart.
                 guard.requested.wait(0.5)
+            if control is not None and control.requested.is_set():
+                stop_reason = control.reason                # the app's Stop ended the frame source
             if stop_reason == "stream ended" and kind in ("obs-camera", "device", "desktop") \
                     and not (guard is not None and guard.requested.is_set()):
                 stop_reason = "video source stopped"
@@ -943,12 +1069,19 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                                              "max": round(float(np.max(session.latencies)), 2) if session.latencies else None},
                  "certain": state["certain"], "approximate": state["approximate"]}
         session.log.write(stats)
-        try:
-            print(f"\nStopped ({stop_reason}). Analysed {stats['frames_processed']:,} frames in "
-                  f"{stats['seconds'] / 60:.1f} min, {stats['frames_dropped']:,} dropped. (Full details: {session.log.path or 'logging is off'})")
-            CONSOLE.line(f"{display_text(session.display, 'certain', state)} | {display_text(session.display, 'approx', state)}", "bold")
-        except (OSError, ValueError):
-            pass                                            # no console any more (window closed)
+        if preview is not None:
+            preview.close()
+        if control is not None:                            # (no `return` in a finally: it would swallow a crash)
+            session.announce()
+            CONSOLE.emit("stopped", **{k: v for k, v in stats.items() if k != "event"},
+                         log=str(session.log.path) if session.log.path else None)
+        else:
+            try:
+                print(f"\nStopped ({stop_reason}). Analysed {stats['frames_processed']:,} frames in "
+                      f"{stats['seconds'] / 60:.1f} min, {stats['frames_dropped']:,} dropped. (Full details: {session.log.path or 'logging is off'})")
+                CONSOLE.line(f"{display_text(session.display, 'certain', state)} | {display_text(session.display, 'approx', state)}", "bold")
+            except (OSError, ValueError):
+                pass                                        # no console any more (window closed)
 
 
 def cmd_devices(args):
@@ -1028,7 +1161,7 @@ def cmd_adjust(args):
     show_counts(session)
 
 
-# ---- Configure Counter.bat: choose what viewers see without editing files -----------------------------
+# ---- configure: choose what viewers see without editing files (the app's Overlay page uses the same helpers) -----------------------------
 
 def toml_string(text):
     """A TOML basic string for any text (quotes, backslashes, new lines, emoji)."""
@@ -1266,6 +1399,33 @@ def cmd_set_count(args):
         CONSOLE.info("The counter window is open: it picks up the new numbers within a second.")
 
 
+def set_counts(cfg, certain, approx, action="set_count"):
+    """The desktop app's Reset / Edit counts. Same file, OBS files and log record as the reset / set-count commands, so
+    a running counter adopts the new numbers within a second (CounterSession.sync_external_changes). -> the session."""
+    for value in (certain, approx):
+        if not _valid_count(value) or value > MAX_STARTING_COUNT:
+            raise UserError(f"Counts must be whole numbers from 0 to {MAX_STARTING_COUNT:,}. Nothing was changed.")
+    if certain > approx:
+        raise UserError("CERTAIN cannot be higher than APPROX: APPROX is the total and includes the certain chests. "
+                        "Nothing was changed.")
+    preflight(cfg, needs_video=False)
+    old = CounterSession(cfg)
+    previous = {"certain": old.state["certain"], "approximate": old.state["approximate"]}
+    session = CounterSession(cfg, reset=(action == "reset"))
+    st = session.state
+    st["certain"], st["approximate"] = certain, approx
+    if action != "reset":
+        st["events_logged"] += 1
+    session.save()
+    session.write_obs()
+    record = {"event_id": "MANUAL" if action == "reset" else f"E{st['events_logged']:04d}", "source": "manual",
+              "action": action, "previous": previous, "logged_at": now_iso()}
+    if action != "reset":
+        record["counts_after"] = {"certain": certain, "approximate": approx}
+    session.log.write(record)
+    return session
+
+
 def short_path(path):
     """Paths in support reports: hide the Windows user name."""
     text = str(path)
@@ -1298,7 +1458,9 @@ def cmd_diagnostics(args):
     ff = paths.ffmpeg_executable()
     if ff:
         try:
-            version_line = subprocess.run([ff, "-version"], capture_output=True, text=True, timeout=10).stdout.splitlines()[0]
+            version_line = subprocess.run([ff, "-version"], capture_output=True, text=True, timeout=10,
+                                          stdin=paths.child_stdin(),
+                                          creationflags=paths.child_process_flags()).stdout.splitlines()[0]
         except Exception as error:
             version_line = f"could not run ({error})"
         out(f"FFmpeg:           {short_path(ff)}  [{version_line}]")
@@ -1381,7 +1543,8 @@ def report_crash(error):
     print("Your counter is safe - it is saved after every chest.")
     if where:
         print(f"Technical details were saved to: {where}")
-    print("If it keeps happening, send that file (and the output of the Diagnostics launcher) when you report the problem.")
+    print("If it keeps happening, send that file (and the diagnostics report: Help & diagnostics in the app) when you "
+          "report the problem.")
 
 
 def build_parser():
@@ -1414,12 +1577,15 @@ def build_parser():
     p.add_argument("--start", type=float, help="start offset in seconds for --source file")
     p.add_argument("--duration", type=float, help="stop after this many seconds (default: run until Ctrl+C)")
     p.add_argument("--reset", action="store_true", help="zero the counts first (counts are otherwise kept)")
+    p.add_argument("--gui", action="store_true", help=argparse.SUPPRESS)        # desktop-app worker: JSON lines, stdin stop
+    p.add_argument("--preview", help=argparse.SUPPRESS)                         # desktop-app preview block name
     p.set_defaults(func=cmd_live)
 
     p = sub.add_parser("video", parents=[common], help="count chests in a recorded gameplay video file")
     p.add_argument("video", help="path to the video file")
     p.add_argument("--start", type=float, help="start at this many seconds")
     p.add_argument("--until", type=float, help="stop at this many seconds")
+    p.add_argument("--gui", action="store_true", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_video)
 
     sub.add_parser("devices", help="list video devices and monitors").set_defaults(func=cmd_devices)
@@ -1463,6 +1629,9 @@ def main(argv=None):
         argv = ["live"]
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "gui", False):            # the desktop app's worker: JSON lines out, no console window of its own
+        CONSOLE.machine = True
+        paths.HIDE_CHILD_CONSOLES = True
     CONSOLE.configure()
     try:
         args.func(args)
