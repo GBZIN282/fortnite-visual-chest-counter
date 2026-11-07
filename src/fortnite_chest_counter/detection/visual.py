@@ -197,6 +197,110 @@ def best_template_correlation(mask, template):
     return float(correlation[y, x]), int(y), int(x)
 
 
+def _box_coefficients(in_size, out_size):
+    """Pillow's BOX resampling weights for one axis (Resample.c precompute_coeffs + normalize_coeffs_8bpc):
+    -> (first source index per output pixel, integer weights [out, taps] in 22-bit fixed point)."""
+    precision = 22
+    scale = in_size / out_size
+    filterscale = max(scale, 1.0)
+    support = 0.5 * filterscale
+    taps = int(np.ceil(support)) * 2 + 1
+    first = np.zeros(out_size, np.int64)
+    weights = np.zeros((out_size, taps), np.float64)
+    for xx in range(out_size):
+        center = (xx + 0.5) * scale
+        xmin = max(int(center - support + 0.5), 0)
+        xmax = min(int(center + support + 0.5), in_size) - xmin
+        w = np.array([1.0 if -0.5 < (x + xmin - center + 0.5) / filterscale <= 0.5 else 0.0 for x in range(xmax)])
+        if w.sum():
+            w = w / w.sum()
+        first[xx] = xmin
+        weights[xx, :xmax] = w
+    fixed = np.where(weights < 0, np.trunc(-0.5 + weights * (1 << precision)), np.trunc(0.5 + weights * (1 << precision)))
+    return first, fixed
+
+
+_BOX_CACHE = {}
+
+
+def _box_taps(in_size, out_size):
+    """Cached per axis -> (i0, i1) source pixels per output pixel, or None. Pillow's BOX weights are 0 or 1 before
+    normalising (a source pixel counts when its centre is inside the output pixel's box), so when every output pixel
+    covers one source pixel or two neighbours - always when shrinking by at most 2x - the 22-bit fixed-point sum
+    (2**21 + (a + b) * 2**21) >> 22 is exactly (a + b + 1) >> 1, and one source pixel gives itself (i1 = i0)."""
+    key = (in_size, out_size)
+    if key not in _BOX_CACHE:
+        first, fixed = _box_coefficients(in_size, out_size)
+        nz = fixed != 0
+        cnt = nz.sum(1)
+        k = nz.argmax(1)
+        rows = np.arange(out_size)
+        one = (cnt == 1) & (fixed[rows, k] == 1 << 22)
+        two = (cnt == 2) & (fixed[rows, k] == 1 << 21) & (fixed[rows, np.minimum(k + 1, fixed.shape[1] - 1)] == 1 << 21)
+        _BOX_CACHE[key] = (first + k, first + k + (cnt == 2)) if (one | two).all() else None
+    return _BOX_CACHE[key]
+
+
+def resize_box(rgb, out_w, out_h):
+    """Shrink an RGB uint8 image (by at most 2x per axis) like Pillow's Image.resize(..., Image.BOX): same weights, same
+    22-bit fixed-point rounding, horizontal pass then vertical pass through an 8-bit intermediate. Bit-identical to
+    Pillow 13 for the detector's pop-up box at its scales (unit-tested); Pillow itself may do the vertical pass first on
+    tall images. Pillow is not part of the release (it would add unsigned binaries), so the detector uses this."""
+    h, w = rgb.shape[:2]
+    hpairs = _box_taps(w, out_w) if out_w != w else None
+    vpairs = _box_taps(h, out_h) if out_h != h else None
+    if (out_w != w and hpairs is None) or (out_h != h and vpairs is None):
+        raise ValueError(f"resize_box only shrinks by up to 2x: {w}x{h} -> {out_w}x{out_h}")
+    out = rgb.astype(np.uint16)                                  # sums of two 8-bit values; results stay <= 255
+    if hpairs is not None:
+        i0, i1 = hpairs
+        flat = out.reshape(h, w * 3)
+        ch = np.arange(3)
+        out = ((flat.take((i0[:, None] * 3 + ch).ravel(), axis=1) + flat.take((i1[:, None] * 3 + ch).ravel(), axis=1)
+                + 1) >> 1).reshape(h, out_w, 3)
+    if vpairs is not None:
+        i0, i1 = vpairs
+        out = (out.take(i0, axis=0) + out.take(i1, axis=0) + 1) >> 1
+    return out.astype(np.uint8)
+
+
+def _window_sums(a, h, w):
+    """Sum over every h x w window ('valid'), from an integral image: fftconvolve(a, ones((h, w)), 'valid') up to
+    rounding, without two FFTs."""
+    c = np.zeros((a.shape[0] + 1, a.shape[1] + 1))
+    c[1:, 1:] = a.cumsum(0).cumsum(1)
+    return c[h:, w:] - c[:-h, w:] - c[h:, :-w] + c[:-h, :-w]
+
+
+def robust_correlation_at(mask, blurred_template, sigma):
+    """`robust_correlation` (the same score, to ~1e-14) AND where its best window is -> (score, y, x) in `mask`
+    coordinates. Built for scanning a whole region quickly: only the part of the mask with ink plus a template-sized margin
+    is correlated (every window that can touch ink stays inside it), and the window sums come from integral images."""
+    from scipy.ndimage import gaussian_filter
+    ys, xs = np.nonzero(mask)
+    th, tw = blurred_template.shape
+    if not len(ys):
+        return 0.0, 0, 0
+    y0, x0 = max(0, ys.min() - th - 4), max(0, xs.min() - tw - 4)
+    img = gaussian_filter(mask[y0:ys.max() + th + 5, x0:xs.max() + tw + 5].astype(np.float64), sigma)
+    if img.shape[0] < th or img.shape[1] < tw:
+        return 0.0, 0, 0
+    tpl = blurred_template
+    n = tpl.size
+    ts = tpl.sum()
+    tvar = (tpl * tpl).sum() - ts * ts / n
+    ws = _window_sums(img, th, tw)
+    ws2 = _window_sums(img * img, th, tw)
+    num = fftconvolve(img, tpl[::-1, ::-1], mode="valid") - ws * ts / n
+    wvar = ws2 - ws * ws / n
+    ok = wvar > 5e-4 * n
+    corr = np.where(ok, num / np.sqrt(np.maximum(tvar * wvar, 1e-9)), 0.0)
+    if not corr.size:
+        return 0.0, 0, 0
+    y, x = np.unravel_index(np.argmax(corr), corr.shape)
+    return float(min(corr[y, x], 1.0)), int(y0 + y), int(x0 + x)
+
+
 def blur_template(template, sigma):
     """Template prepared for `robust_correlation`: padded so the blur can spread, then Gaussian-blurred."""
     from scipy.ndimage import gaussian_filter

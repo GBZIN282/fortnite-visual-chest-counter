@@ -62,6 +62,8 @@ def _why(ev):
     """A short, plain-language reason for the decision (the full reason stays in the log and debug mode)."""
     r = ev.get("reason", "")
     counted = ev.get("certain_counted") or ev.get("approx_counted")
+    if ev.get("scaled_popup"):
+        return "pop-up drawn larger than usual (approx only)"
     if "promoted to HIGH" in r:
         return "confirmed by compression check"
     if "adjusted to LOW" in r:
@@ -81,6 +83,8 @@ def _why(ev):
 
 def _evidence(ev):
     """What was measured, worded so it is not mistaken for a probability."""
+    if ev.get("scaled_popup"):
+        return f"large-HUD match {ev['scaled_popup']['blur']:.2f} ({ev.get('adjusted_tier', '?')})"
     if ev.get("popup_score") is not None:
         return f"match {ev['popup_score']:.2f} ({ev.get('adjusted_tier', '?')})"
     return f"prompt {ev.get('interaction_score', 0):.2f}"

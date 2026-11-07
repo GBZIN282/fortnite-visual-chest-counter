@@ -132,7 +132,7 @@ class Capture:
             rec = self.recording_time(ev["time"])
             row = {k: ev.get(k) for k in ("event_id", "time", "stamp", "source", "adjusted_tier", "popup_score",
                                           "popup_template", "interaction_score", "certain_counted", "approx_counted",
-                                          "reason")}
+                                          "scaled_popup", "reason")}
             row["recording_time"] = round(rec, 3)
             self.events.append(row)
             # Generic button prompts (pickups, ammo boxes ...) are frequent and not chest decisions: logged, video not kept.
@@ -282,6 +282,8 @@ class Capture:
             decision = "certain" if ev.get("certain_counted") else "approx" if ev.get("approx_counted") else "not counted"
             evidence = (f"popup {ev['popup_score']:.2f} {ev['popup_template']}" if ev.get("popup_score") is not None
                         else f"prompt {ev.get('interaction_score') or 0:.2f}")
+            if ev.get("scaled_popup"):
+                evidence += f", large HUD: blurred {ev['scaled_popup']['blur']:.2f} at x{ev['scaled_popup']['scale']}"
             rows.append({"_t": ev["time"], "kind": "event", "id": ev.get("event_id") or "",
                          "live_time": mmss(ev["time"]), "clip": ev["clip"] or "",
                          "clip_time": "" if ev["clip_time"] is None else mmss(ev["clip_time"]), "decision": decision,

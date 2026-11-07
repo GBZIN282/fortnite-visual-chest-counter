@@ -121,3 +121,8 @@ device = "OBS Virtual Camera"
 monitor = 1
 # How often the status line is printed, in seconds.
 status_interval_seconds = 5
+
+[app]
+# The desktop app reopens with the size, position and maximised state it was closed with (saved in state/window.json).
+# false = always open at the default size. If the saved place is no longer on any screen, the window is moved back.
+remember_window = true

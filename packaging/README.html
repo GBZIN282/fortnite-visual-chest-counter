@@ -36,13 +36,15 @@
 <main>
 
 <h1>Fortnite Visual Chest Counter</h1>
-<p class="sub">Visual chest detection for OBS, capture cards &amp; video files &middot; v0.2.0 public beta &middot; Windows 10 / 11 &middot; no Python or programming needed</p>
+<p class="sub">Automatically count Fortnite chests from gameplay video &middot; v0.2.0 public beta &middot; Windows 10 / 11 &middot; no Python or programming needed</p>
 
 <h2 style="border-top:none;margin-top:1rem">What this is</h2>
-<p>A small app for streamers. It watches your gameplay picture (through OBS) and keeps a running count of
-the <b>chests you open</b> in Fortnite. It writes the numbers into a text file that you show on stream with a normal OBS
+<p>A small app for players and streamers. It recognises the chest-opening pop-ups in Fortnite gameplay video and keeps
+a running count of the <b>chests opened</b> &mdash; from your own stream's OBS feed (one PC or two), a capture card, a
+livestream you watch or a recorded video. It writes the numbers into a text file that you show on stream with a normal OBS
 text source. You choose the font, size and colours in OBS. It does not touch Fortnite, the game files or your account:
-it only looks at the video picture, like a viewer would.</p>
+it only looks at the video picture, like a viewer would, and never shows anything that is not already on screen
+(see <a href="#fairplay">Fair play and compatibility</a>).</p>
 
 <div class="big">
   <div class="card">
@@ -86,7 +88,7 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
 <ul>
   <li>Windows 10 or 11 on the PC that runs <b>OBS</b> (your streaming PC if you have two).</li>
   <li><b>OBS Studio 28 or newer</b> (it has the Virtual Camera built in).</li>
-  <li>Fortnite shown in a <b>16:9</b> picture (1920&times;1080 is ideal; 1280&times;720 or higher works) with the <b>normal HUD</b> visible, in <b>English or Brazilian Portuguese</b>.</li>
+  <li>Fortnite shown in a <b>16:9</b> picture (1920&times;1080 is ideal; 1280&times;720 or higher works) with the <b>HUD</b> visible, in <b>English or Brazilian Portuguese</b>.</li>
   <li>About half of one CPU core. No graphics card needed.</li>
   <li><b>Nothing else to install.</b> Everything the app needs is already inside the folder.</li>
 </ul>
@@ -233,7 +235,7 @@ down or changes the counting; it needs at least 2 GB of free disk space and stop
 <p>The app can also analyse a prerecorded gameplay video (.mp4, .mkv, .mov&hellip;). On the Dashboard click <b>Analyse a recording&hellip;</b>,
 choose the file and click <b>Start</b>. It runs faster than real time, shows progress and each counted chest, and finishes with the CERTAIN and
 APPROX numbers (APPROX includes CERTAIN). This <b>never changes your live counter</b>; the result text files go to <code>video_output\</code>.
-The video should be clean 16:9 gameplay with the normal HUD, in English or Brazilian Portuguese.</p>
+The video should be clean 16:9 gameplay with the HUD visible, in English or Brazilian Portuguese.</p>
 
 <h2 id="start">Already opened chests? Set a starting count</h2>
 <p>On the Dashboard click <b>Edit counts&hellip;</b>, enter how many chests you have already opened (for example <code>150</code>) as
@@ -248,7 +250,8 @@ The same window corrects a wrong count. It works while counting: the counter pic
 <h2 id="settings">Settings (optional)</h2>
 <p><b>Most people never need to change anything.</b> The <b>Settings</b> page has the Fortnite language (English, Portuguese (Brazil) or Both;
 pick the one your game is set to), the session logs and the optional <a href="#capture">diagnostic recording</a>. Changes are used the next time
-you click Start counting.</p>
+you click Start counting. <b>Remember window size and position</b> (on by default) reopens the app the way you closed it,
+maximised or not; a window whose monitor is gone is moved back onto a screen.</p>
 <p><b>Advanced:</b> everything else is in <code>config.toml</code> (Settings &rarr; <b>Open config.toml</b>; every option is explained inside).
 A mistake in the file only produces a warning and the default is used for that option.</p>
 <table>
@@ -287,7 +290,7 @@ If you extract to a new folder instead, copy <code>state\</code> and <code>confi
 </table>
 
 <h2 id="compat">Fortnite compatibility</h2>
-<p>The chest detection in v0.2.0 is the same as in v0.1.1, which was developed and live-tested during <b>Fortnite Chapter 7 Season 5</b> (November 2026); its automated tests also use recordings of earlier gameplay.
+<p>The chest detection in v0.2.0 is the one from v0.1.1 plus recognition of English chest pop-ups on a larger HUD. It was developed and live-tested during <b>Fortnite Chapter 7 Season 5</b> (November 2026); its automated tests also use recordings of earlier gameplay.
 It recognises Fortnite&rsquo;s on-screen chest pop-up and HUD elements, which Epic Games can change in any update.
 If chests stop being counted after a Fortnite update, please report it on the project&rsquo;s GitHub page (Issues: <code>https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues</code>) with the diagnostics report.</p>
 
@@ -295,11 +298,25 @@ If chests stop being counted after a Fortnite update, please report it on the pr
 <ul>
   <li><b>APPROX is an estimate.</b> It can be a little high or low. CERTAIN is the conservative number; APPROX is the best guess of the total.</li>
   <li><b>Language:</b> chest detection uses the word in the pop-up. Supported: <b>English</b> (CHEST) and <b>Brazilian Portuguese</b> (BA&Uacute;). Other languages are not supported yet.</li>
-  <li><b>HUD layout:</b> it expects the normal HUD position and size at a 16:9 picture. Heavily moved/scaled HUD, hidden HUD or a 4:3 / vertical picture will not work well.</li>
+  <li><b>HUD layout:</b> it expects the HUD in its usual place at a 16:9 picture. A HUD drawn larger (up to about 1.3&times;) is recognised for <b>English</b> pop-ups only, and those chests count in <b>APPROX only</b>, never CERTAIN. A smaller, moved or hidden HUD, Portuguese pop-ups on a larger HUD, or a 4:3 / vertical picture will not work well.</li>
+  <li><b>Back-to-back chests on a larger HUD</b> (the second opened while the first pop-up is still showing) can count as one &mdash; never as two for one chest.</li>
   <li><b>Clean gameplay feed recommended:</b> overlays, webcam or alerts on top of the HUD can hide the clues.</li>
   <li><b>Audio is not used.</b> Only the picture is analysed.</li>
-  <li>Tested on a limited number of recordings (PC English and PS5 Portuguese). Other platforms or settings may behave differently &mdash; that&rsquo;s why this is a <b>beta</b>.</li>
+  <li>Tested on a limited number of recordings (PC English, PS5 Portuguese, and three recordings of streams with a larger HUD). Other platforms or settings may behave differently &mdash; that&rsquo;s why this is a <b>beta</b>.</li>
 </ul>
+
+<h2 id="fairplay">Fair play and compatibility</h2>
+<p>The counter is built for statistics and stream presentation: it counts chest openings that are <b>already visible on
+screen</b>. It gives no competitive information &mdash; it does not locate hidden chests, reveal enemies, aim, move or play for
+you. It has no connection to Fortnite: it only reads video frames (OBS Virtual Camera, a capture device, a screen capture or a
+video file), and its one keyboard shortcut (Ctrl+Alt+M) is a standard Windows hotkey that sends nothing to the game.</p>
+<p>Epic Games&rsquo; rules prohibit tools that use real-time gameplay information to gain a competitive advantage. This app is
+designed for counting, not for competitive assistance &mdash; but Epic does not certify individual third-party applications,
+and this one has not been reviewed or approved by Epic. The most conservative ways to use it: <b>count recorded video</b>
+(Analyse a recording), or <b>run the counter on a separate streaming PC</b> (two-PC setup), so nothing from this project
+runs where Fortnite runs. Running it on the same PC as Fortnite works technically, but its compatibility with Fortnite&rsquo;s
+anti-cheat has not been officially verified. A two-PC setup is not a compliance guarantee either; it simply keeps the counter
+away from the game. Tournament or event rules can be stricter &mdash; check them if you compete.</p>
 
 <h2>Privacy and safety</h2>
 <p>The app makes <b>no internet connection</b> and sends nothing anywhere. It only reads video frames from the OBS Virtual Camera
@@ -308,7 +325,7 @@ never saved or sent. It does not inject into, read memory from or modify Fortnit
 
 <h2>Credits &amp; licenses</h2>
 <p>Fortnite Visual Chest Counter is free, open-source software (MIT License, see <code>LICENSE.txt</code>). It bundles FFmpeg (LGPL v3, unmodified), Qt for Python / Qt (LGPL v3, unmodified), Python, NumPy and SciPy under their own licenses: see <code>LICENSE-NOTICE.txt</code>, <code>runtime\licenses\</code> and <code>runtime\ffmpeg\FFMPEG-NOTICE.txt</code>.
-Not affiliated with or endorsed by Epic Games. Source code and more help: this project&rsquo;s GitHub page. Fortnite is a trademark of Epic Games, Inc.</p>
+Independent and unofficial: not affiliated with, endorsed by or approved by Epic Games. Source code and more help: this project&rsquo;s GitHub page. Fortnite is a trademark of Epic Games, Inc.</p>
 
 </main>
 </body>

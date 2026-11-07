@@ -187,6 +187,106 @@ def test_robust_correlation_matches_shipped_score_on_binary_input_when_unblurred
     assert V.robust_correlation(mask, V.blur_template(tpl, 0.6), 0.6) > 0.95
 
 
+def test_robust_correlation_at_is_the_shipped_blurred_score():
+    """The scale-aware channel's fast blurred match (ink crop + integral sums) = robust_correlation, plus where it is."""
+    import numpy as np
+    from fortnite_chest_counter.detection import visual as V
+    tpl = V.load_templates()[0]["array"]
+    blur = V.blur_template(tpl, 0.6)
+    rng = np.random.default_rng(5)
+    for k in range(20):
+        mask = (rng.random((V.ROI_H, V.ROI_W)) > 0.995).astype(np.float32)
+        y, x = rng.integers(0, V.ROI_H - tpl.shape[0]), rng.integers(0, V.ROI_W - tpl.shape[1])
+        if k % 2:
+            mask[y:y + tpl.shape[0], x:x + tpl.shape[1]] = np.maximum(mask[y:y + tpl.shape[0], x:x + tpl.shape[1]], tpl)
+        score, by, bx = V.robust_correlation_at(mask, blur, 0.6)
+        assert abs(score - V.robust_correlation(mask, blur, 0.6)) < 1e-9
+        if k % 2:
+            assert (by, bx) == (y - 2, x - 2) and score > 0.9                      # template padded by 2 px
+    assert V.robust_correlation_at(np.zeros((V.ROI_H, V.ROI_W), np.float32), blur, 0.6) == (0.0, 0, 0)
+
+
+def test_resize_box_is_pillow_box_on_the_popup_box():
+    import numpy as np
+    from fortnite_chest_counter.detection import visual as V
+    try:
+        from PIL import Image
+    except ImportError:                                                         # Pillow is a dev dependency only
+        return
+    rng = np.random.default_rng(9)
+    for _ in range(10):
+        roi = rng.integers(0, 256, (V.ROI_H, V.ROI_W, 3), dtype=np.uint8)
+        for s in estimator.SCALED_SCALES[1:]:
+            w, h = round(V.ROI_W * s), round(V.ROI_H * s)
+            assert np.array_equal(V.resize_box(roi, w, h), np.asarray(Image.fromarray(roi).resize((w, h), Image.BOX)))
+
+
+def _word_frames(scale, on=(1.0, 3.0), total=6.0, shift_at=None):
+    """Synthetic 15 fps frames: the English CHEST word drawn `scale` times its normal size in the pop-up box, shown during
+    `on` and (optionally) pushed 24 px down at `shift_at`, as a stacked pop-up line does."""
+    import numpy as np
+    from fortnite_chest_counter.detection import visual as V
+    tpl = next(t for t in V.load_templates() if t["id"] == "en:CHEST")["array"] > 0.5
+    h, w = tpl.shape
+    rows = (np.arange(round(h * scale)) / scale).astype(int).clip(0, h - 1)
+    cols = (np.arange(round(w * scale)) / scale).astype(int).clip(0, w - 1)
+    word = tpl[np.ix_(rows, cols)]
+    for i in range(int(total * 15)):
+        t = i / 15
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        if on[0] <= t < on[1]:
+            y0 = V.ROI_Y + 70 + (24 if shift_at is not None and t >= shift_at else 0)
+            x0 = V.ROI_X + 150
+            frame[y0:y0 + word.shape[0], x0:x0 + word.shape[1]][word] = (220, 180, 240)      # pop-up lavender
+        yield t, frame
+
+
+def _run_estimator(frames, scale_aware):
+    estimator.configure(DEFAULTS["detector"])
+    est = estimator.ChestEstimator(scale_aware=scale_aware)
+    events = []
+    for t, frame in frames:
+        events += est.process_frame(t, frame)
+    return events + est.flush()
+
+
+def test_scale_aware_popup_counts_a_larger_hud_word_as_approx_only():
+    assert _run_estimator(_word_frames(1.25), scale_aware=False) == []                # the exact path misses it
+    (ev,) = _run_estimator(_word_frames(1.25), scale_aware=True)
+    assert ev["adjusted_tier"] == "MEDIUM" and ev["approx_counted"] and not ev["certain_counted"]
+    assert ev["scaled_popup"]["scale"] == 0.8 and ev["scaled_popup"]["blur"] >= estimator.SCALED_TRIGGER
+    assert "scale-aware" in ev["reason"] and "never CERTAIN" in ev["reason"]
+    assert abs(ev["time"] - 1.0) < 0.1                                                # onset time, not promotion time
+
+
+def test_scale_aware_channel_leaves_normal_popups_and_back_to_back_refires_unchanged():
+    keys = ("time", "source", "base_tier", "adjusted_tier", "popup_score", "certain_counted", "approx_counted", "reason")
+    frames = dict(scale=1.0, on=(1.0, 4.0), total=7.0, shift_at=2.3)                  # exact path re-fires on the jump
+    off = _run_estimator(_word_frames(**frames), scale_aware=False)
+    on = _run_estimator(_word_frames(**frames), scale_aware=True)
+    assert len(off) == 2 and all(e["certain_counted"] for e in off)
+    assert [{k: e[k] for k in keys} for e in on] == [{k: e[k] for k in keys} for e in off]
+    assert not any("scaled_popup" in e for e in on)
+
+
+def test_scale_aware_popup_is_counted_once_when_a_stacked_line_moves_it():
+    events = _run_estimator(_word_frames(1.25, on=(1.0, 4.0), total=7.0, shift_at=2.3), scale_aware=True)
+    assert len(events) == 1 and events[0]["approx_counted"] and not events[0]["certain_counted"]
+
+
+def test_scale_aware_channel_only_for_the_specific_english_word():
+    try:
+        estimator.configure(dict(DEFAULTS["detector"], languages=["pt"]))
+        assert estimator.ChestEstimator().scaled_templates == {}                     # short PT word: never scaled
+        estimator.configure(dict(DEFAULTS["detector"], medium_counts_alone_languages=[]))
+        assert estimator.ChestEstimator().scaled_templates == {}                     # user: English MEDIUM not alone
+        estimator.configure(DEFAULTS["detector"])
+        assert list(estimator.ChestEstimator().scaled_templates) == ["en:CHEST"]
+        assert estimator.ChestEstimator(scale_aware=False).scaled_templates == {}
+    finally:
+        estimator.configure(DEFAULTS["detector"])
+
+
 def test_events_carry_temporal_popup_diagnostics():
     ev = _medium_popup_with_shooting("en:CHEST")
     assert set(ev["popup_trace"]) >= {"frames_ge_075", "frames_ge_065", "span_ge_060_s", "top5_mean", "y_std", "x_std"}

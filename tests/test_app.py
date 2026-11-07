@@ -565,6 +565,136 @@ def test_mark_button_and_hotkey_need_a_running_recording():
             paths.APP_DIR = app_dir
 
 
+def _qt():
+    try:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        return None
+    return QApplication.instance() or QApplication([])
+
+
+def test_window_layout_round_trip_keeps_size_position_and_maximised_state():
+    qt = _qt()
+    if qt is None:
+        print("      (skipped: PySide6 not installed)")
+        return
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMainWindow
+    from fortnite_chest_counter.gui import app as A
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "state" / "window.json"
+        w = QMainWindow()
+        w.setGeometry(110, 120, 500, 400)
+        w.show()
+        qt.processEvents()
+        assert A.save_window(w, path) and path.exists()
+        again = QMainWindow()
+        assert A.restore_window(again, path) and again.geometry() == w.geometry()
+        w.showMaximized()                                            # closed while maximised
+        qt.processEvents()
+        A.save_window(w, path)
+        again = QMainWindow()
+        assert A.restore_window(again, path) and again.windowState() & Qt.WindowMaximized
+        assert again.normalGeometry() == w.normalGeometry()          # un-maximising returns to the normal size and place
+        for widget in (w, again):
+            widget.deleteLater()
+        qt.processEvents()
+
+
+def test_window_layout_is_moved_back_when_its_screen_is_gone_and_ignored_when_damaged():
+    qt = _qt()
+    if qt is None:
+        print("      (skipped: PySide6 not installed)")
+        return
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtWidgets import QMainWindow
+    from fortnite_chest_counter.gui import app as A
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "window.json"
+        far = QMainWindow()
+        far.setGeometry(4000, 3000, 500, 400)                        # e.g. a second monitor that is unplugged now
+        far.show()
+        qt.processEvents()
+        A.save_window(far, path)
+        back = QMainWindow()
+        assert A.restore_window(back, path)
+        assert QGuiApplication.primaryScreen().availableGeometry().contains(back.geometry())
+        moved = QMainWindow()                                        # saved on the right-hand monitor of two
+        moved.setGeometry(2700, 100, 900, 700)
+        A.keep_visible(moved, [QRect(0, 0, 1920, 1040)])
+        assert QRect(0, 0, 1920, 1040).contains(moved.geometry()) and moved.size().width() == 900
+        kept = QMainWindow()
+        kept.setGeometry(100, 100, 900, 700)
+        A.keep_visible(kept, [QRect(0, 0, 1920, 1040)])
+        assert kept.geometry() == QRect(100, 100, 900, 700)          # a visible window is never moved
+        path.write_text("{damaged", encoding="utf-8")
+        assert A.restore_window(QMainWindow(), path) is False
+        path.unlink()
+        assert A.restore_window(QMainWindow(), path) is False        # first start: default layout
+        for widget in (far, back, moved, kept):
+            widget.deleteLater()
+        qt.processEvents()
+
+
+def test_remember_window_setting_is_on_by_default_saved_on_close_and_off_means_default_layout():
+    qt = _qt()
+    if qt is None:
+        print("      (skipped: PySide6 not installed)")
+        return
+    from PySide6.QtCore import Qt
+    from fortnite_chest_counter.gui import app as A
+    here, app_dir = os.getcwd(), paths.APP_DIR
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chdir(tmp)
+        paths.APP_DIR = Path(tmp)
+        windows = []
+        try:
+            cfg_path = Path(tmp) / "config.toml"
+            cfg_path.write_text('[capture]\nquality = "lossless"\n', encoding="utf-8")      # a config from before this setting
+            cfg, _, warnings = settings.load_config(cfg_path)
+            assert cfg["app"]["remember_window"] is True and cfg["capture"]["quality"] == "lossless" and not warnings
+
+            def window():
+                win = A.MainWindow()
+                win.timer.stop()
+                windows.append(win)
+                return win
+
+            win = window()
+            assert win.restore_layout() is False and win.size().width() == 1120          # nothing saved yet
+            win.show()
+            win.showMaximized()
+            qt.processEvents()
+            win.close()
+            assert A.window_file().exists()                                              # saved on closing
+            win = window()
+            assert win.restore_layout() and win.windowState() & Qt.WindowMaximized       # reopens the way it was closed
+            win.settings_page.load()
+            assert win.settings_page.remember_window.isChecked()
+            win.settings_page.remember_window.setChecked(False)
+            win.settings_page.save()
+            cfg = settings.load_config(cfg_path)[0]
+            assert cfg["app"]["remember_window"] is False and cfg["capture"]["quality"] == "lossless"   # others kept
+            assert not A.window_file().exists()                                          # back to the default layout
+            win.show()
+            qt.processEvents()
+            win.close()
+            assert not A.window_file().exists()                                          # off: nothing saved
+            win = window()
+            assert win.restore_layout() is False and not win.windowState() & Qt.WindowMaximized
+        finally:
+            for win in windows:
+                if win._source_scan is not None:                      # the device scan runs ffmpeg in this folder
+                    win._source_scan.join(30)
+                win.preview_reader and win.preview_reader.close()
+                win.deleteLater()
+            qt.processEvents()
+            os.chdir(here)
+            paths.APP_DIR = app_dir
+
+
 def test_recordings_started_in_the_same_second_get_their_own_folders():
     from fortnite_chest_counter.capture import Capture
     with tempfile.TemporaryDirectory() as tmp:

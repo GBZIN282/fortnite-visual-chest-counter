@@ -68,6 +68,9 @@ DEFAULTS = {
         "monitor": 1,                           # monitor number for --source desktop
         "status_interval_seconds": 5,
     },
+    "app": {
+        "remember_window": True,                # the desktop app reopens with the size, position and maximised state it closed with
+    },
 }
 
 _TIERS = ("CERTAIN", "HIGH")

@@ -19,10 +19,10 @@ No detection changes. Notes: [RELEASE_NOTES_v0.1.1.md](RELEASE_NOTES_v0.1.1.md).
 - Release runs on the official python.org embeddable Python (signed), no self-built executable; reproducible zip,
   `runtime/PROVENANCE.txt`.
 
-## v0.2.0 - Desktop app (in development on branch `dev/v0.2.0`, not released)
+## v0.2.0 - Desktop app (released 2026-11-07, public beta)
 
-No detection changes. Draft notes: [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md). Trust/signing analysis:
-[WINDOWS_TRUST.md](WINDOWS_TRUST.md).
+One detection addition (scale-aware pop-ups, below); otherwise the v0.1.1 detector. Notes:
+[RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md). Trust/signing analysis: [WINDOWS_TRUST.md](WINDOWS_TRUST.md).
 
 Done (dev build): one PySide6 app replacing every `.bat` (Dashboard with source list + Start/Stop, optional activity panel
 with Normal/Debug detail, optional live preview, Overlay page, Edit counts / Reset, Analyse a recording, Settings, Help &
@@ -42,12 +42,21 @@ Before release:
 3. Final build + scan (the top-level `README.md` is rewritten for the app on this branch; review it before merging).
 4. Optional, separate change: replace `scipy.signal.fftconvolve` with NumPy (-107 unsigned files, -30 MB) only if the
    regression harness shows identical events.
+5. Done (user's decision 2026-11-07: ship it in v0.2.0): the **scale-aware pop-up channel** (`estimator.SCALE_AWARE_POPUPS`)
+   - event-identical on all references, recovers every verified miss on 1.2x-HUD streams (APPROX only). Evidence, cost and
+   limits: [INVESTIGATION_2026-11-07.md](INVESTIGATION_2026-11-07.md).
+6. After release (user's second PC): the public download on a fresh PC, Smart App Control, and SRT / capture source ->
+   OBS -> Virtual Camera -> app; update the docs with the results.
 
 ## After v0.2.0 - from chest counter to match analytics (user's direction, 2026-11-07)
 
 Every step is built and measured on labelled captures (CAPTURE.md), never by tuning thresholds on a single example.
 Order agreed with the user: capture -> better chest recognition -> match lifecycle -> Auto language -> analytics.
 
+- **A2. HUD scale** - first found 2026-11-07: streamers with a ~1.2x HUD lose nearly every chest pop-up. Scale-aware
+  English pop-ups shipped in v0.2.0 (APPROX only). Next, with more labelled large-HUD captures: scale the sprite-tag and
+  prompt clue boxes with the same estimate, re-check the locked scale when the HUD changes, decide whether any scaled pop-up
+  may be CERTAIN. No user-facing "algorithm" setting - one adaptive detector.
 - **B. More loot types** - Sprite Chests and other chest variants whose pop-up word is not just "CHEST", as their own event
   types next to normal chests (one opening = one event, whatever clues fire).
 - **C. Rewards** - the "YOU FOUND ..." animation and similar reward cues as their own events, de-duplicated across frames

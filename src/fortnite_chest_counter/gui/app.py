@@ -22,8 +22,8 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QImage, QPalette, QPixmap
+from PySide6.QtCore import QByteArray, QPoint, QRect, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QIcon, QImage, QPalette, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton,
@@ -73,6 +73,54 @@ def config_file():
 def load_cfg():
     cfg, _, warnings = settings.load_config(str(config_file()) if config_file().exists() else None)
     return cfg, warnings
+
+
+# ---- window size and position ([app] remember_window)
+WINDOW_FILE = Path("state") / "window.json"           # next to the counts; the release zip never contains it
+
+
+def window_file():
+    return paths.APP_DIR / WINDOW_FILE
+
+
+def save_window(widget, path):
+    """Qt's own saveGeometry (normal size and position, maximised / full-screen state, which screen) -> a small JSON file."""
+    try:
+        C.atomic_write(path, json.dumps({"version": 1, "geometry": bytes(widget.saveGeometry().toBase64()).decode("ascii")}))
+        return True
+    except OSError:
+        return False
+
+
+def restore_window(widget, path):
+    """Apply a layout saved by save_window, before the window is shown. -> True if one was applied. Qt itself moves a
+    window whose screen is gone onto an available screen; keep_visible covers anything still unreachable."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        geometry = QByteArray.fromBase64(data["geometry"].encode("ascii"))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False                                    # no file yet, or a damaged one: default layout
+    if geometry.isEmpty() or not widget.restoreGeometry(geometry):
+        return False
+    keep_visible(widget)
+    return True
+
+
+def keep_visible(widget, screens=None):
+    """If the title bar would not be reachable on any screen (monitor unplugged, resolution lowered), centre the window on
+    the primary screen at a size that fits. `screens`: available-area QRects (default: the real screens)."""
+    if screens is None:
+        screens = [s.availableGeometry() for s in QGuiApplication.screens()]
+    if not screens:
+        return
+    frame = widget.frameGeometry() if widget.isVisible() else widget.geometry()
+    title = QRect(frame.left(), frame.top(), frame.width(), 32)
+    if any(title.intersected(s).width() >= 120 and title.intersected(s).height() >= 16 for s in screens):
+        return
+    area = screens[0]
+    w, h = min(widget.width(), area.width()), min(widget.height(), area.height())
+    widget.resize(w, h)
+    widget.move(area.center() - QPoint(w // 2, h // 2))
 
 
 def read_counts(state_path):
@@ -976,6 +1024,11 @@ class SettingsPage(QWidget):
         box_layout.addLayout(row)
         layout.addWidget(box)
 
+        box, box_layout = card("Window")
+        self.remember_window = QCheckBox("Remember window size and position (the app reopens the way you closed it)")
+        box_layout.addWidget(self.remember_window)
+        layout.addWidget(box)
+
         box, box_layout = card("Advanced", "Everything else (detector cadence, which evidence counts) is in config.toml. "
                                            "Edit it only if you know why; a typo shows a warning and uses the default.")
         row = QHBoxLayout()
@@ -999,6 +1052,7 @@ class SettingsPage(QWidget):
         self.snapshots.setChecked(cfg["logging"]["save_snapshots"])
         self.snapshots.setEnabled(cfg["logging"]["enabled"])
         self.lossless.setChecked(cfg["capture"]["quality"] == "lossless")
+        self.remember_window.setChecked(cfg["app"]["remember_window"])
         self.saved.setText("")
 
     def save(self):
@@ -1008,6 +1062,9 @@ class SettingsPage(QWidget):
             C.update_config_file(config_file(), "logging", {"enabled": self.logging.isChecked(),
                                                             "save_snapshots": self.snapshots.isChecked()})
             C.update_config_file(config_file(), "capture", {"quality": "lossless" if self.lossless.isChecked() else "standard"})
+            C.update_config_file(config_file(), "app", {"remember_window": self.remember_window.isChecked()})
+            if not self.remember_window.isChecked():
+                window_file().unlink(missing_ok=True)   # off = back to the default layout, also if switched on again later
         except (C.UserError, OSError) as error:
             show_error(self, str(error))
             return
@@ -1073,8 +1130,10 @@ class HelpPage(QWidget):
 
         box, box_layout = card("About")
         box_layout.addWidget(label(f"{APP_NAME} v{__version__} ({RELEASE_CHANNEL}). {TAGLINE}.", wrap=True))
-        box_layout.addWidget(label("Free and open source (MIT licence). Not affiliated with or endorsed by Epic Games. "
-                                   "It only looks at your video; it never touches the game.", "hint", wrap=True))
+        box_layout.addWidget(label("Free and open source (MIT licence). Independent and unofficial: not affiliated with, "
+                                   "endorsed by or approved by Epic Games. It only analyses the video picture: it never "
+                                   "connects to or changes the game and shows nothing that is not already on screen. "
+                                   "Fair play and compatibility: see the full guide.", "hint", wrap=True))
         row = QHBoxLayout()
         row.addWidget(button("Project page", "link", on_click=lambda: QDesktopServices.openUrl(QUrl(REPO_URL))))
         row.addStretch(1)
@@ -1133,6 +1192,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(app_icon())
         self.resize(1120, 800)
         self.setMinimumSize(920, 640)
+        self.window_file = None                 # set by restore_layout() for the real app window only (not tests / self-test)
         self.worker = Worker()
         self.mode = "stopped"
         self.counts = (0, 0)
@@ -1678,6 +1738,20 @@ class MainWindow(QMainWindow):
             return
         VideoDialog(self).exec()
 
+    # ---- window layout
+    def restore_layout(self):
+        """Called once by main() before the window is shown: reopen where the user left it ([app] remember_window)."""
+        self.window_file = window_file()
+        cfg, _ = load_cfg()
+        return cfg["app"]["remember_window"] and restore_window(self, self.window_file)
+
+    def save_layout(self):
+        """On closing: keep the size, position and maximised state for next time (only while the setting is on)."""
+        if self.window_file is None or not self.isVisible():
+            return False
+        cfg, _ = load_cfg()
+        return cfg["app"]["remember_window"] and save_window(self, self.window_file)
+
     # ---- closing
     def closeEvent(self, event):
         if self.worker.running():
@@ -1687,10 +1761,12 @@ class MainWindow(QMainWindow):
                     event.ignore()
                     return
                 self.quit_when_stopped = True
+                self.save_layout()               # before hiding: a hidden window has no position to save
                 self.stop_counting()
                 self.hide()
             event.ignore()                       # closes for real when the worker has finished (see handle 'exit')
             return
+        self.save_layout()
         if self.preview_reader is not None:
             self.preview_reader.close()
         super().closeEvent(event)
@@ -1801,5 +1877,6 @@ def main(argv=None):
         return 0
     window = MainWindow()
     sys.excepthook = _crash_hook(lambda: window)
+    window.restore_layout()
     window.show()
     return app.exec()

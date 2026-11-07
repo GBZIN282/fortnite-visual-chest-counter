@@ -8,6 +8,7 @@ Frame source  ->  ChestEstimator.process_frame(t, frame)  ->  finished events
 
 Clues used (all existing detectors, parameters untouched):
   popup        word CHEST / BAU in the XP popup           (visual_detector.py)
+               + scale-aware channel: CHEST drawn larger (bigger HUD), blurred match at smaller scales - APPROX only
   sprite       "+75 CONTAINER OPENED" tag                  (sprite_detector.py)
   ammo         ammo-counter jumps = the local player fires (evidence.py)
   prompt       interaction-button icon + chest-object colours around it (evidence.py / object_cue.py)
@@ -24,12 +25,14 @@ Counting rules (see the constants below; all explicit and configurable):
                      - MEDIUM popups of languages whose word is long enough to be reliable
                        (config), plus
                      - MEDIUM popups backed by a prompt + chest-object, plus
-                     - prompt + chest-object events whose popup never fired.
+                     - prompt + chest-object events whose popup never fired, plus
+                     - scale-aware pop-ups (HUD drawn larger; exact match too low): MEDIUM, APPROX only.
   never counted      LOW (e.g. MEDIUM while the player is shooting), generic prompts
                      (pickups, ammo crates, cannons...), anything else. They are still logged.
 """
 
-from collections import deque
+import time
+from collections import Counter, deque
 
 import numpy as np
 
@@ -74,6 +77,28 @@ ROBUST_PROMOTION = True
 ROBUST_SIGMA = 0.6
 ROBUST_HIGH_MIN = 0.88
 ROBUST_SEARCH_PX = 8          # the blurred match is searched within this many px of the exact match
+
+# Scale-aware pop-ups (docs/INVESTIGATION_2026-11-07.md). Some streams draw the HUD ~1.2x larger, so the pop-up word is
+# ~33 px wide instead of 27 px: the exact match (one fixed size) stays near 0.25 and nearly every chest is missed, while a
+# blurred match of the picture made smaller (x0.8) scores 0.82-0.92. This is a second channel BESIDE the exact path:
+#   - it runs only when the pop-up box has >= SCALED_PREFILTER_PX lavender pixels (production computes that mask anyway)
+#   - it looks only for the specific English word (SCALED_POPUP_TEMPLATES) and only shrinks the picture (= larger HUD);
+#     enlarging, or the short Portuguese word, matched non-chest text on the PS5 reference
+#   - after two strong pop-ups agree on a scale (SCALED_LOCK_MIN), only that scale and its neighbours are searched
+#   - a blurred onset becomes a pop-up only when the exact path has not fired within SCALED_WAIT seconds of it, so every
+#     exact-path event (incl. back-to-back chests and the CERTAIN rules) is exactly as before
+#   - no "position jumped" re-fire (a stacked "WEAKPOINT STREAK / CHEST" pop-up would count twice)
+#   - such a pop-up is merged with prompts like any pop-up and counts APPROX ONLY (MEDIUM), never CERTAIN.
+# Validation: event-identical on every reference clip (English and PS5, clean and compressed); on three large-HUD sessions
+# 11 of 11 verified chests (exact path alone: 3), 0 duplicates, 0 wrong counts.
+SCALE_AWARE_POPUPS = True
+SCALED_POPUP_TEMPLATES = ("en:CHEST",)       # used only while the word also counts MEDIUM alone (APPROX_COUNTS_MEDIUM_ALONE)
+SCALED_SCALES = (1.0, 0.9, 0.85, 0.8, 0.75)  # picture made smaller = HUD drawn larger
+SCALED_TRIGGER = 0.80
+SCALED_REARM = 0.55
+SCALED_PREFILTER_PX = 60
+SCALED_WAIT = 2.0
+SCALED_LOCK_MIN = 0.84
 
 # Prompt + chest-object events whose popup never fired: counted as APPROX only, never CERTAIN.
 INTERACTION_ONLY_COUNTS_APPROX = True
@@ -155,7 +180,8 @@ def adjust_tier(base_tier, shooting, interaction):
 
 
 class ChestEstimator:
-    def __init__(self):
+    def __init__(self, scale_aware=None):
+        """scale_aware: None = SCALE_AWARE_POPUPS; False / True to compare both (tests, research)."""
         self.templates = [t for t in V.load_templates() if t["id"].split(":")[0] in ENABLED_LANGUAGES]
         if not self.templates:
             raise ValueError(f"no chest-word template for languages {sorted(ENABLED_LANGUAGES)}; "
@@ -175,6 +201,15 @@ class ChestEstimator:
         self.last_interaction_time = -1e9
         self.frame_index = 0
         self.now = 0.0
+        on = SCALE_AWARE_POPUPS if scale_aware is None else scale_aware
+        self.scaled_templates = {tid: self.robust_templates[tid] for tid in SCALED_POPUP_TEMPLATES
+                                 if on and tid in self.robust_templates and APPROX_COUNTS_MEDIUM_ALONE.get(tid, False)}
+        self.scaled_onset = OnsetDetector(SCALED_TRIGGER, SCALED_REARM, False)
+        self.pending_scaled = []
+        self.exact_onsets = deque()
+        self.scale_votes, self.scale_locked = Counter(), None
+        self.scaled_stats = {"prefilter_pass": 0, "onsets": 0, "dropped_for_exact": 0, "search_ms_total": 0.0,
+                             "search_ms_max": 0.0}
 
     # ------------------------------------------------------------------ per frame
     def process_frame(self, t, frame):
@@ -191,6 +226,9 @@ class ChestEstimator:
 
     def flush(self):
         """End of stream: finish whatever is pending with the evidence that exists."""
+        for p in self.pending_scaled:
+            self._promote_scaled(p)
+        self.pending_scaled = []
         return self._finish(self.now, final=True)
 
     # ------------------------------------------------------------------ clue updates
@@ -213,7 +251,8 @@ class ChestEstimator:
                 p.update(score=score, y=y, x=x, template=self.templates[k]["id"])
                 if SAVE_SNAPSHOTS:
                     p["roi"] = roi.copy()
-        if self.popup.update(t, score, y, x):
+        exact_fired = self.popup.update(t, score, y, x)
+        if exact_fired:
             self.pending_popups.append({"onset": t, "score": score, "y": y, "x": x,
                                         "template": self.templates[k]["id"] if score > 0 else "-"})
             if SAVE_SNAPSHOTS:
@@ -230,6 +269,88 @@ class ChestEstimator:
                 for p in live:
                     best_r = p.setdefault("robust", {})
                     best_r[tpl["id"]] = max(best_r.get(tpl["id"], 0.0), r)
+        if self.scaled_templates:
+            self._scaled_popup(t, roi, mask, exact_fired)
+
+    # ------------------------------------------------------------------ scale-aware pop-ups (SCALE_AWARE_POPUPS)
+    def _scaled_popup(self, t, roi, mask, exact_fired):
+        """Second pop-up channel, after the exact path of the same frame. Only adds pop-ups the exact path did not find."""
+        if exact_fired:                                     # the exact path owns this pop-up: drop blurred onsets near it
+            self.exact_onsets.append(t)
+            kept = [p for p in self.pending_scaled if p["onset"] < t - SCALED_WAIT]
+            self.scaled_stats["dropped_for_exact"] += len(self.pending_scaled) - len(kept)
+            self.pending_scaled = kept
+        while self.exact_onsets and self.exact_onsets[0] < t - SCALED_WAIT - 1.0:
+            self.exact_onsets.popleft()
+        best = (0.0, 0, 0, 1.0, None)
+        if mask.sum() >= SCALED_PREFILTER_PX:
+            a = time.perf_counter()
+            best = self._scaled_best(roi, mask)
+            ms = 1000 * (time.perf_counter() - a)
+            st = self.scaled_stats
+            st["prefilter_pass"] += 1
+            st["search_ms_total"] += ms
+            st["search_ms_max"] = max(st["search_ms_max"], ms)
+        score, cy, cx, s, tid = best
+        for p in self.pending_scaled:                       # keep the peak over the pop-up's first second
+            if t <= p["onset"] + POPUP_FINISH_DELAY and score > p["blur"]:
+                p.update(blur=score, scale=s, y=cy, x=cx)
+                if SAVE_SNAPSHOTS:
+                    p["roi"] = roi.copy()
+        if self.scaled_onset.update(t, score, cy, cx):
+            if not any(abs(o - t) <= SCALED_WAIT for o in self.exact_onsets) and \
+                    not any(abs(p["onset"] - t) <= POPUP_FINISH_DELAY for p in self.pending_popups):
+                self.pending_scaled.append({"onset": t, "blur": score, "scale": s, "y": cy, "x": cx, "template": tid})
+                if SAVE_SNAPSHOTS:
+                    self.pending_scaled[-1]["roi"] = roi.copy()
+                self.scaled_stats["onsets"] += 1
+        for p in list(self.pending_scaled):                 # not claimed by the exact path in time -> a pop-up
+            if t >= p["onset"] + SCALED_WAIT:
+                self.pending_scaled.remove(p)
+                self._promote_scaled(p)
+
+    def _scaled_scales(self):
+        if self.scale_locked is None:
+            return SCALED_SCALES
+        i = SCALED_SCALES.index(self.scale_locked)
+        return SCALED_SCALES[max(0, i - 1):i + 2]
+
+    def _scaled_best(self, roi, mask):
+        """Best blurred match over the active scales -> (score, centre y, centre x in pop-up box pixels, scale, template)."""
+        best = (0.0, 0, 0, 1.0, None)
+        for s in self._scaled_scales():
+            m = mask if s == 1.0 else V.lavender_mask(V.resize_box(roi, round(roi.shape[1] * s), round(roi.shape[0] * s)))
+            if m.sum() < 20:
+                continue
+            for tid, tpl in self.scaled_templates.items():
+                score, y, x = V.robust_correlation_at(m, tpl, ROBUST_SIGMA)
+                if score > best[0]:
+                    h, w = tpl.shape
+                    best = (score, int((y + h // 2) / s), int((x + w // 2) / s), s, tid)
+        return best
+
+    def _promote_scaled(self, p):
+        """A blurred onset the exact path did not claim becomes a pending pop-up (finished and counted like any other)."""
+        exact_peak = max((h[1] for h in self.popup_hist if p["onset"] <= h[0] <= p["onset"] + POPUP_FINISH_DELAY),
+                         default=0.0)
+        popup = {"onset": p["onset"], "score": exact_peak, "y": p["y"], "x": p["x"], "template": p["template"],
+                 "scaled": {"blur": p["blur"], "scale": p["scale"]}}
+        if "roi" in p:
+            popup["roi"] = p["roi"]
+        self.pending_popups.append(popup)
+
+    def _vote_scale(self, p):
+        """Strong pop-ups vote for the stream's HUD scale (scaled: its scale; strong exact: 1.0); 2 agreeing votes lock it."""
+        s = p.get("scaled")
+        if s is not None:
+            if s["blur"] >= SCALED_LOCK_MIN:
+                self.scale_votes[s["scale"]] += 1
+        elif p["score"] >= ROBUST_HIGH_MIN:
+            self.scale_votes[1.0] += 1
+        if self.scale_votes and self.scale_locked is None:
+            (scale, n), *rest = self.scale_votes.most_common()
+            if n >= 2 and (not rest or n >= 2 * rest[0][1]):
+                self.scale_locked = scale
 
     def _sprite(self, t, frame):
         x0, y0, w, h = sprite_detector.ROI_X, sprite_detector.ROI_Y, sprite_detector.ROI_W, sprite_detector.ROI_H
@@ -344,9 +465,19 @@ class ChestEstimator:
                 approx, reason = True, reason + f"; MEDIUM counted approx: {p['template']} word is reliable"
             elif APPROX_MEDIUM_WITH_OBJECT_SUPPORT and support is not None:
                 approx, reason = True, reason + f"; MEDIUM counted approx: chest-object prompt support ({support[0]:.2f})"
+        scaled = p.get("scaled")
+        if scaled is not None:
+            # HUD drawn larger: the exact score says nothing here, so the tier rules above do not apply. APPROX only.
+            adjusted, certain, approx = "MEDIUM", False, True
+            reason = (f"scale-aware pop-up: blurred {p['template']} match {scaled['blur']:.2f} at x{scaled['scale']} "
+                      f"(exact match {p['score']:.2f}; HUD drawn larger) -> MEDIUM, counted approx only (never CERTAIN)")
+        if self.scaled_templates:
+            self._vote_scale(p)
         if not approx:
             reason += "; NOT counted"
         extra = {"_snapshot": p["roi"]} if "roi" in p else {}
+        if scaled is not None:
+            extra["scaled_popup"] = {"blur": round(float(scaled["blur"]), 3), "scale": scaled["scale"]}
         return {**extra, "time": onset, "source": "fused" if merged is not None else "popup",
                 "base_tier": base_tier, "adjusted_tier": adjusted,
                 "popup_score": p["score"], "popup_template": p["template"],

@@ -22,12 +22,16 @@ This variant keeps the production path untouched and adds a second channel besid
 
     python research/adaptive_popup.py SOURCE OUT_DIR       (one source per process; see SOURCES)
     python research/adaptive_popup.py --summary OUT_DIR
+    python research/adaptive_popup.py --integrated SOURCE OUT_DIR    the shipped channel (estimator.SCALE_AWARE_POPUPS)
+    python research/adaptive_popup.py --same-as NEW_DIR OLD_DIR      identical decisions? (shipped vs this experiment)
+    python research/adaptive_popup.py --timing-integrated SRC,SRC OUT_DIR
 
 Every frame is also scored by brute force (all scales, no prefilter) OUTSIDE the timed path, to measure how many
 qualifying frames the prefilter would have thrown away.
 """
 
 import json
+import os
 import sys
 import time
 from collections import Counter
@@ -109,6 +113,8 @@ def _robust_loc(mask, blurred_template):
 
 
 class AdaptiveEstimator(E.ChestEstimator):
+    SKIP_PROMPT_FRAMES = False            # variant: no stage 2 on frames where production runs its prompt check (hold score)
+
     def __init__(self):
         super().__init__()
         self.reliable = {t["id"]: V.blur_template(t["array"], SIGMA) for t in self.templates
@@ -141,7 +147,10 @@ class AdaptiveEstimator(E.ChestEstimator):
         a = time.perf_counter()
         cache = {}
         best = (0.0, 0, 0, 1.0, None)
-        if scaled_mask(roi, 1.0, cache).sum() >= PREFILTER_MIN_PX:     # stage 1 (in production this mask already exists)
+        prompt_frame = (self.frame_index % E.PROMPT_EVERY_N_FRAMES) == 0     # production's heaviest frames
+        if self.SKIP_PROMPT_FRAMES and prompt_frame and self.last_best is not None:
+            best = self.last_best                                           # hold the previous score for one frame
+        elif scaled_mask(roi, 1.0, cache).sum() >= PREFILTER_MIN_PX:   # stage 1 (in production this mask already exists)
             self.stats["prefilter_pass"] += 1
             best = blurred_best(roi, self.active_scales(), self.reliable, cache)
             self.stats["stage2_ms"].append(1000 * (time.perf_counter() - a))
@@ -192,7 +201,7 @@ class AdaptiveEstimator(E.ChestEstimator):
 
 # ---------------------------------------------------------------- runner
 
-CAP = Path(r"C:\Users\gzgab\Downloads\Fortnite-Visual-Chest-Counter\Fortnite-Visual-Chest-Counter-v0.2.0\captures")
+CAP = Path(os.environ.get("CHEST_CAPTURES", ROOT / "captures"))     # the user's diagnostic captures (read-only); set CHEST_CAPTURES
 SOURCES = {
     "ref_en": ("mp4", ROOT / "samples/video tests/Fortnites-NEW-HD-No-Audio.mp4", "Fortnites-NEW"),
     "ref_en_tw6000": ("mp4", ROOT / "analysis_output/variants/en_tw6000.mp4", "Fortnites-NEW"),
@@ -346,7 +355,7 @@ def summary(out):
     print(text)
 
 
-def timing(names, out):
+def timing(names, out, integrated=False):
     """Per-frame cost with nothing else running: production and adaptive in SEPARATE passes over the same frames (each
     pass decodes the video again; only process_frame is timed), no audit. -> ms/frame mean / p99 / max per source."""
     E.configure(settings.DEFAULTS["detector"])
@@ -354,7 +363,14 @@ def timing(names, out):
     for name in names:
         kind, path, _ = SOURCES[name]
         res, n = {}, 0
-        for label, cls in (("production", E.ChestEstimator), ("adaptive", AdaptiveEstimator)):
+
+        class SkipPrompt(AdaptiveEstimator):
+            SKIP_PROMPT_FRAMES = True
+
+        variants = ((("scale-aware off", lambda: E.ChestEstimator(scale_aware=False)),
+                     ("scale-aware on", lambda: E.ChestEstimator(scale_aware=True))) if integrated else
+                    (("production", E.ChestEstimator), ("adaptive", AdaptiveEstimator), ("adaptive-skip", SkipPrompt)))
+        for label, cls in variants:
             ms, stage2, passes = [], [], 0
             for _, frames in segments(kind, path):
                 est = cls()
@@ -365,22 +381,102 @@ def timing(names, out):
                 if label == "adaptive":
                     stage2 += est.stats["stage2_ms"]
                     passes += est.stats["prefilter_pass"]
+                if label == "scale-aware on":
+                    passes += est.scaled_stats["prefilter_pass"]
             ms = np.array(ms)
             n = len(ms)
-            res[label] = (ms.mean(), np.percentile(ms, 99), ms.max(), stage2, passes)
-        p, a = res["production"], res["adaptive"]
-        lines.append(f"{name:10s} {n:6d} frames | production {p[0]:5.1f} ms (p99 {p[1]:5.1f}, max {p[2]:5.1f}) | adaptive "
-                     f"{a[0]:5.1f} ms (p99 {a[1]:5.1f}, max {a[2]:5.1f}) | stage 2 on {100 * a[4] / n:4.1f}% of frames, "
-                     f"{np.mean(a[3]) if a[3] else 0:4.1f} ms mean / {np.max(a[3]) if a[3] else 0:4.1f} max | budget 66.7 ms")
+            res[label] = (ms.mean(), np.percentile(ms, 99), ms.max(), stage2, passes, int((ms > 66.7).sum()),
+                          int((ms > 50).sum()))
+        parts = [f"{name:10s} {n:6d} frames" + (f" (search ran on {passes} frames)" if integrated else "")]
+        for label, r in res.items():
+            parts.append(f"{label} {r[0]:5.1f} ms (p99 {r[1]:5.1f}, max {r[2]:5.1f}; >50 ms: {r[6]}, >66.7 ms: {r[5]})")
+        lines.append(" | ".join(parts))
         print(lines[-1], flush=True)
     Path(out).mkdir(parents=True, exist_ok=True)
     (Path(out) / "timing.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def run_integrated(name, out):
+    """The channel as shipped: production ChestEstimator with scale_aware=False ("production") and True ("adaptive"),
+    same JSON as `run` (no prefilter audit), so --summary and --same-as work on it."""
+    kind, path, label_name = SOURCES[name]
+    E.configure(settings.DEFAULTS["detector"])
+    rows = {"production": [], "adaptive": []}
+    timing = {"production": [], "adaptive": []}
+    stats, locks = Counter(), []
+    for offset, frames in segments(kind, path):
+        est = {"production": E.ChestEstimator(scale_aware=False), "adaptive": E.ChestEstimator(scale_aware=True)}
+        for t, frame in frames:
+            for k, e in est.items():
+                a = time.perf_counter()
+                rows[k] += [dict(ev, time=ev["time"] + offset) for ev in e.process_frame(t, frame)]
+                timing[k].append(time.perf_counter() - a)
+        for k, e in est.items():
+            rows[k] += [dict(ev, time=ev["time"] + offset) for ev in e.flush()]
+        st = est["adaptive"].scaled_stats
+        stats["frames"] += est["adaptive"].frame_index
+        stats["prefilter_pass"] += st["prefilter_pass"]
+        stats["scaled_onsets"] += st["onsets"]
+        stats["scaled_dropped_for_exact"] += st["dropped_for_exact"]
+        stats["search_ms_total"] += st["search_ms_total"]
+        stats["search_ms_max"] = max(stats["search_ms_max"], st["search_ms_max"])
+        locks.append(est["adaptive"].scale_locked)
+
+    def slim(e):
+        return {k: e.get(k) for k in ("time", "source", "adjusted_tier", "popup_score", "popup_template", "certain_counted",
+                                      "approx_counted", "scaled_popup", "reason")}
+
+    ms = {k: 1000 * np.array(v) for k, v in timing.items()}
+    result = {"source": name, "label_name": label_name, "frames": stats["frames"],
+              "prefilter_pass_rate": stats["prefilter_pass"] / max(stats["frames"], 1),
+              "stage2_ms_mean": stats["search_ms_total"] / max(stats["prefilter_pass"], 1),
+              "stage2_ms_max": stats["search_ms_max"],
+              "frame_ms": {k: {"mean": float(v.mean()), "p99": float(np.percentile(v, 99)), "max": float(v.max())}
+                           for k, v in ms.items()},
+              "scaled_onsets": stats["scaled_onsets"], "scaled_dropped_for_exact": stats["scaled_dropped_for_exact"],
+              "locked_scales": locks, "audit": {"qualifying_frames": 0, "rejected_by_prefilter": 0, "rejected_px": []},
+              "production": [slim(e) for e in rows["production"]], "adaptive": [slim(e) for e in rows["adaptive"]]}
+    Path(out).mkdir(parents=True, exist_ok=True)
+    (Path(out) / f"{name}.json").write_text(json.dumps(result, indent=1, default=str), encoding="utf-8")
+    print(name, "done")
+
+
+def same_as(new_dir, old_dir):
+    """Does the shipped channel (new_dir, --integrated) make exactly the experiment's decisions (old_dir, v2 run)?"""
+    def key(e):
+        sp = e.get("scaled_popup") or {}
+        return (round(e["time"], 3), e["source"], e["adjusted_tier"], bool(e["certain_counted"]), bool(e["approx_counted"]),
+                sp.get("blur"), sp.get("scale"))
+    ok = True
+    for name in SOURCES:
+        a, b = Path(new_dir) / f"{name}.json", Path(old_dir) / f"{name}.json"
+        if not (a.exists() and b.exists()):
+            print(f"{name}: missing")
+            ok = False
+            continue
+        new, old = json.loads(a.read_text(encoding="utf-8")), json.loads(b.read_text(encoding="utf-8"))
+        for side in ("production", "adaptive"):
+            n, o = [key(e) for e in new[side]], [key(e) for e in old[side]]
+            same = n == o
+            ok &= same
+            locks = f"  locks {new['locked_scales']} vs {old['locked_scales']}" if side == "adaptive" else ""
+            print(f"{name:15s} {side:10s} {len(n):3d} events  {'IDENTICAL' if same else 'DIFFERENT'}{locks}")
+            if not same:
+                for x in sorted(set(n) ^ set(o)):
+                    print("      ", "new" if x in n else "old", x)
+    print("ALL IDENTICAL" if ok else "DIFFERENCES FOUND")
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "--summary":
         summary(sys.argv[2])
+    elif sys.argv[1] == "--integrated":
+        run_integrated(sys.argv[2], sys.argv[3])
+    elif sys.argv[1] == "--same-as":
+        same_as(sys.argv[2], sys.argv[3])
     elif sys.argv[1] == "--timing":
         timing(sys.argv[2].split(","), sys.argv[3])
+    elif sys.argv[1] == "--timing-integrated":
+        timing(sys.argv[2].split(","), sys.argv[3], integrated=True)
     else:
         run(sys.argv[1], sys.argv[2])

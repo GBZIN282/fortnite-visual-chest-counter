@@ -1,16 +1,20 @@
 # Fortnite Visual Chest Counter
 
-**Visual chest detection for OBS, capture cards & video files.**
+**Automatically count Fortnite chests from gameplay video.**
 
-A Windows desktop app that counts the Fortnite chests you open by watching your gameplay **pixels** (an OBS feed, a capture
-card, a screen or a recorded video) and writes the numbers to a text file that an OBS Text source shows on stream.
+A free, open-source Windows app that recognises the chest-opening pop-ups visible in Fortnite gameplay and keeps a running
+count - from your own stream's OBS feed (single-PC or dual-PC), a capture card, a livestream you watch, or a recorded video.
+The numbers go to a text file that an OBS Text source shows on stream, so nobody has to count by hand.
 
-It does **not** read Fortnite memory, use any Fortnite API, modify the game, inject code or automate gameplay.
+It works only with the picture: it does not need the Fortnite process, read game memory or files, inject code, modify the
+game, send input or automate gameplay, and it never reveals anything that is not already on screen (no hidden chests, no
+enemy information). See [Fair play and compatibility](#fair-play-and-compatibility).
 
-> Not affiliated with or endorsed by Epic Games. "Fortnite" is a trademark of Epic Games, Inc.
-> Status: **v0.2.0 public beta** (desktop app). The chest detection is the same as in v0.1.1, developed and tested during
-> Fortnite Chapter 7 Season 5 (November 2026) - see [Fortnite compatibility](#fortnite-compatibility). Windows 10 / 11.
-> Nothing to install.
+> Independent, unofficial project: not affiliated with, endorsed by or approved by Epic Games. "Fortnite" is a trademark of
+> Epic Games, Inc.
+> Status: **v0.2.0 public beta** (desktop app). Chest detection as in v0.1.1, plus English chest pop-ups on streams whose
+> HUD is drawn larger (counted in the estimated total). Developed and tested during Fortnite Chapter 7 Season 5 (November
+> 2026) - see [Fortnite compatibility](#fortnite-compatibility). Windows 10 / 11. Nothing to install.
 
 ## The two numbers (read this first)
 
@@ -23,6 +27,25 @@ Example: `CERTAIN: 42` and `APPROX: 51` means *about 51 chests were opened, 42 o
 **Do NOT add them together** (that would be 93, which is wrong). APPROX is always greater than or equal to CERTAIN.
 
 APPROX is an estimate, not an exact count. See [Known limitations](#known-limitations).
+
+## Fair play and compatibility
+
+The counter is built for statistics and stream presentation: it counts chest openings that are **already visible on
+screen**. It gives no competitive information - it does not locate hidden chests, reveal enemies, aim, move or play for you.
+It has no connection to Fortnite: it only reads video frames (OBS Virtual Camera, a capture device, a screen capture or a
+video file), makes no internet connection, and its one keyboard shortcut (Ctrl+Alt+M, mark a missed chest) is a standard
+Windows hotkey that sends nothing to the game.
+
+Epic Games' rules prohibit tools that use real-time gameplay information to gain a competitive advantage. This app is
+designed for counting, not for competitive assistance - but Epic does not certify individual third-party applications, and
+this one has not been reviewed or approved by Epic. The most conservative ways to use it:
+
+- **Count recorded video** (Dashboard -> Analyse a recording), or
+- **run the counter on a separate streaming PC** (dual-PC setup), so nothing from this project runs where Fortnite runs.
+
+Running the counter on the same PC as Fortnite (single-PC OBS setup) works technically, but its compatibility with
+Fortnite's anti-cheat has not been officially verified. A dual-PC setup is not a compliance guarantee either; it simply keeps
+the counter away from the game. Tournament or event rules can be stricter than normal play - check them if you compete.
 
 ## Getting setup help from AI
 
@@ -49,17 +72,21 @@ Facts for assistants (please do not contradict these):
   Both work while counting.
 - Count a recorded video: Dashboard → **Analyse a recording...** (never changes the live counter; results in `video_output\`).
 - Supported Fortnite languages: English and Portuguese (Brazil); Settings → **Fortnite language** (English / Portuguese
-  (Brazil) / Both; "Both" is not automatic detection). Picture must be 16:9 with the normal HUD visible.
+  (Brazil) / Both; "Both" is not automatic detection). Picture must be 16:9 with the HUD visible. A HUD drawn up to
+  about 1.3x larger is recognised for English pop-ups; those chests count in APPROX only.
 - Problems: Help & diagnostics → **Run diagnostics** → **Copy report**. Missed chests: Dashboard → **Diagnostic recording** →
   "Only around my marks", then press **Ctrl+Alt+M** right after each miss.
 - Advanced settings live in `config.toml` next to the app (Settings → Open config.toml); a wrong value only shows a warning
   and uses the default. Every command also works from a terminal: `runtime\python\python.exe -m fortnite_chest_counter --help`.
+- The app only analyses video pixels; it never connects to Fortnite or the internet. It is **not** approved by Epic Games:
+  never call it "ban-safe". Most conservative setups: counting recorded video, or the counter on a separate streaming PC.
+  Same-PC use works but its anti-cheat compatibility is not officially verified (see Fair play and compatibility).
 - v0.2.0's detection was developed and tested during Fortnite Chapter 7 Season 5 (November 2026). A later Fortnite update can
   change the HUD cues it relies on; then the user should open an issue: https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues
 
 ## Contents
 
-[Download](#download) · [Quick start](#quick-start) · [Single-PC setup](#single-pc-setup) · [Dual-PC setup](#dual-pc-setup) ·
+[Fair play](#fair-play-and-compatibility) · [Download](#download) · [Quick start](#quick-start) · [Single-PC setup](#single-pc-setup) · [Dual-PC setup](#dual-pc-setup) ·
 [Other video inputs](#other-video-inputs) · [Show it on stream](#show-it-on-stream-obs-text-source) ·
 [Customize what viewers see](#customize-what-viewers-see) · [Activity & live preview](#activity-panel-and-live-preview) ·
 [Recorded video](#counting-a-recorded-video) · [Starting count & reset](#starting-count-and-reset) ·
@@ -228,7 +255,9 @@ Recording never slows down or changes counting; it needs 2 GB of free disk space
 ## Settings
 
 The **Settings** page: Fortnite language (English / Portuguese (Brazil) / Both - pick the one your game uses; "Both" checks
-both words all the time and is only useful for mixed footage), session logs (and pop-up pictures), diagnostic recording.
+both words all the time and is only useful for mixed footage), session logs (and pop-up pictures), diagnostic recording,
+and **Remember window size and position** (on by default: the app reopens with the size, place and maximised state it was
+closed with; if that place is no longer on any screen it is moved back).
 Everything else is in `config.toml` (Settings → Open config.toml; every option is explained inside): `certain_min_tier`,
 `count_*_as_approx`, `process_fps`, `[capture]` details. Changes apply the next time you start counting.
 
@@ -268,10 +297,15 @@ can, a diagnostic capture.
 - **APPROX is an estimate** and can be slightly high or low. CERTAIN is the conservative number.
 - **Language-specific:** chest detection reads the word in the pop-up: English (CHEST) and Portuguese (Brazil) (BAÚ) only.
   Special chests whose pop-up says something else (e.g. Sprite Chests) are not counted as chests yet.
-- **HUD layout/scale:** assumes the normal HUD at a 16:9 picture. Moved/scaled/hidden HUD or 4:3 / vertical video will not work well.
+- **HUD layout/scale:** assumes a 16:9 picture with the HUD in its usual place. A HUD drawn larger (up to about 1.3x) is
+  recognised for **English** pop-ups only, and those chests count in **APPROX only**, never CERTAIN. A smaller, moved or
+  hidden HUD, Portuguese pop-ups on a larger HUD, and 4:3 / vertical video will not work well.
+- **Back-to-back chests on a larger-HUD stream** (the second opened while the first pop-up is still showing) can count
+  as one - never as two for one chest.
 - **Clean gameplay feed recommended:** overlays on top of the HUD can hide the clues.
 - **Audio is not used**; only the picture is analysed.
-- Tested on a limited set of recordings (PC English, PS5 Portuguese, their stream-compressed versions) plus live sessions.
+- Tested on a limited set of recordings (PC English, PS5 Portuguese, their stream-compressed versions, three diagnostic
+  recordings of streams with a larger HUD) plus live sessions.
   Direct capture-card input is untested on physical cards. Windows only.
 
 ## How it works
@@ -282,7 +316,10 @@ slow counting down. The counter samples 15 frames per second (rescaled to 1280x7
 ammo-counter changes that indicate shooting (which downgrades ambiguous pop-ups of short, less specific words). Clues are
 merged into one event per chest, each event gets a confidence tier, and the tier decides whether it adds to CERTAIN + APPROX
 or to APPROX only. Because stream compression slightly smears the small pop-up text, a medium-confidence pop-up is also
-checked with a compression-tolerant (blurred) glyph match; if that match is strong it is promoted to CERTAIN. Measurements:
+checked with a compression-tolerant (blurred) glyph match; if that match is strong it is promoted to CERTAIN. Some streams
+draw the HUD larger, so the English word no longer matches at its normal size: when the pop-up area is lit but the normal
+match finds nothing, the counter also tries the blurred match at a few smaller picture scales. Such a chest counts in
+APPROX only, and never when the normal match already found that pop-up. Measurements:
 [docs/ACCURACY_NOTES.md](docs/ACCURACY_NOTES.md). Research history: [docs/DETECTOR_NOTES.md](docs/DETECTOR_NOTES.md).
 All frames are processed in memory with a latest-frame policy (no growing queue); nothing is sent over the network.
 
