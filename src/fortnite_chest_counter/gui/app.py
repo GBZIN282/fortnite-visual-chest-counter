@@ -1428,7 +1428,15 @@ class MainWindow(QMainWindow):
                               f": {message.get('folder', '')}"})
             elif message.get("state") == "off":
                 self.recording = None
-                self.add_log({"type": "info", "text": "Diagnostic recording off."})
+                if message.get("mode") not in (None, "off"):            # asked for a recording, but it could not start
+                    rec = self.dashboard.rec_mode
+                    rec.blockSignals(True)
+                    rec.setCurrentIndex(rec.findData("off"))
+                    rec.blockSignals(False)
+                    self.add_log({"type": "warn", "text": "The diagnostic recording could not start (see the warning above); "
+                                                          "counting continues. Choose a recording mode again to retry."})
+                else:
+                    self.add_log({"type": "info", "text": "Diagnostic recording off."})
             elif message.get("state") == "saved":
                 if self.recording and self.recording.get("folder") == message.get("folder"):
                     self.recording = None

@@ -553,6 +553,8 @@ def test_mark_button_and_hotkey_need_a_running_recording():
             assert win.recording is not None
             win.handle({"type": "capture", "state": "saved", "folder": "X"})
             assert win.recording is None and not win.dashboard.mark.isEnabled()
+            win.handle({"type": "capture", "state": "off", "mode": "events"})                  # a start that failed
+            assert win.dashboard.rec_mode.currentData() == "off" and fake.sent[-1] == "mark"  # shown honestly, not re-sent
             if win._source_scan is not None:                              # the device scan runs ffmpeg in this folder
                 win._source_scan.join(30)
             win.preview_reader and win.preview_reader.close()
@@ -561,6 +563,16 @@ def test_mark_button_and_hotkey_need_a_running_recording():
         finally:
             os.chdir(here)
             paths.APP_DIR = app_dir
+
+
+def test_recordings_started_in_the_same_second_get_their_own_folders():
+    from fortnite_chest_counter.capture import Capture
+    with tempfile.TemporaryDirectory() as tmp:
+        caps = [Capture(tmp, mode, 15, 1280, 720) for mode in ("marks", "events", "session")]   # well within one second
+        folders = [c.folder for c in caps]
+        for c in caps:
+            c.close(timeout=10)
+        assert len(set(folders)) == 3 and all(f.is_dir() for f in folders)
 
 
 def test_marks_arrive_through_the_app_control_channel():

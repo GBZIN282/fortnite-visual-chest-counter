@@ -54,6 +54,35 @@ between; the real detector re-fires on such a "position jump", which this simpli
 Cost of the diagnostic version (all 8 scales, exact + blurred, on a loaded machine): ~39 ms/frame, against ~2-3 ms for the
 single exact match. Too heavy as is for a 15 fps live loop (67 ms budget shared with everything else).
 
+## Adaptive two-stage recognition (experiment, `research/adaptive_popup.py`)
+
+Goal: recover these pop-ups inside the real pipeline without a user-facing "algorithm" choice, keeping production's
+accuracy and its 15 fps budget (66.7 ms per analysed frame). Not used by the app or the counter.
+
+Design (each decision taken from a measurement above):
+
+* **Production path untouched.** The exact word match, its onsets (incl. the position-jump re-fire for back-to-back chests),
+  tiers, merging and counting rules run exactly as shipped; the new channel only ADDS pop-ups the exact path never claims.
+* **Stage 1 - prefilter:** lavender pixels in the pop-up box >= 60 (production computes this mask every frame anyway).
+* **Stage 2 - only after stage 1:** blurred match (production's sigma-0.6 NCC) of the reliable word (en:CHEST; never the short
+  BAU word) at shrinking scales x1.0, 0.9, 0.85, 0.8, 0.75 - no enlarging scales (their only hit was the PT false alarm).
+  After two strong (>= 0.84) pop-ups agree on a scale, only that scale and its neighbours are searched.
+* **Ownership:** a blurred onset (>= 0.80) waits 2 s; if the exact path fires for the same pop-up, the exact path owns it.
+* **Counting:** an unclaimed blurred pop-up is finished like any pop-up (prompt/object merge, shooting, sprite) and counts
+  **APPROX only, never CERTAIN**, so CERTAIN keeps its meaning.
+* **No position-jump re-fire in the blurred channel:** v1 had it and counted one stacked pop-up ("+200 / +691 / +800 XP,
+  WEAKPOINT STREAK / CHEST", 034505 at 132.9 s) twice - the blurred best position jitters between scales and stacked lines.
+  It re-arms only after the pop-up is gone. Cost: a second chest opened while the first pop-up is still on screen can be
+  missed on large-HUD streams (recall, never a double count).
+* **Fast stage 2 (exactly equivalent):** per scale, resize the box, mask, crop the SCALED mask to its ink plus a
+  template-sized margin, production's NCC with window sums from integral images instead of two FFTs. Same score as
+  production to 3.7e-14 on 124 frames x 5 scales; ~3x faster than the full-box computation (crop BEFORE resizing was
+  faster still but changed scores by up to 0.036 - rejected).
+* **Audit:** every frame is also scored by brute force (all scales, no prefilter) outside the timed path, to count
+  qualifying frames the prefilter would have thrown away.
+
+ADAPTIVE_RESULTS
+
 ## Proposal (not implemented - needs approval and the regression gate)
 
 1. **HUD scale estimate per session**: track which scale gives the best blurred CHEST score on strong pop-ups (and later

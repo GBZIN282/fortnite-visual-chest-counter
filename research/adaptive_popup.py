@@ -13,6 +13,12 @@ This variant keeps the production path untouched and adds a second channel besid
            SCALED_WAIT seconds - so every exact-path event (incl. back-to-back chests) is exactly as in production
   count    a blurred-only pop-up is merged/finished like any pop-up (prompt merge, shooting, sprite) and then counts
            APPROX ONLY - never CERTAIN - so the meaning of CERTAIN is unchanged
+  re-fire  the blurred channel re-arms only after the pop-up has gone (score < REARM for 0.3 s). It does NOT use the exact
+           path's "position jumped" re-fire: with several scales and stacked pop-up lines ("WEAKPOINT STREAK / CHEST")
+           the blurred best position jitters, and v1 counted one stacked pop-up twice (034505, 134.5 s)
+  speed    stage 2 = every scale: resize, mask, crop the SCALED mask to its ink + a template-sized margin (every window
+           that can overlap ink stays), production's blurred NCC with window sums from integral images instead of two
+           FFTs - the same score to ~1e-15, ~3x faster (scratchpad bench_stage2.py)
 
     python research/adaptive_popup.py SOURCE OUT_DIR       (one source per process; see SOURCES)
     python research/adaptive_popup.py --summary OUT_DIR
@@ -61,12 +67,22 @@ def blurred_best(roi, scales, templates, cache):
         m = scaled_mask(roi, s, cache)
         if m.sum() < 20:
             continue
+        ys, xs = np.nonzero(m)
         for tid, blur in templates.items():
-            score, y, x = V.robust_location(m, blur, SIGMA) if hasattr(V, "robust_location") else _robust_loc(m, blur)
+            my, mx = blur.shape[0] + 4, blur.shape[1] + 4                # crop to the ink: same best window, less work
+            y0, x0 = max(0, ys.min() - my), max(0, xs.min() - mx)
+            score, y, x = _robust_loc(m[y0:ys.max() + my + 1, x0:xs.max() + mx + 1], blur)
             if score > best[0]:
                 h, w = blur.shape
-                best = (score, int((y + h // 2) / s), int((x + w // 2) / s), s, tid)
+                best = (score, int((y0 + y + h // 2) / s), int((x0 + x + w // 2) / s), s, tid)
     return best
+
+
+def _box_sum(a, h, w):
+    """Sum over every h x w window ('valid'), via an integral image."""
+    c = np.zeros((a.shape[0] + 1, a.shape[1] + 1))
+    c[1:, 1:] = a.cumsum(0).cumsum(1)
+    return c[h:, w:] - c[:-h, w:] - c[h:, :-w] + c[:-h, :-w]
 
 
 def _robust_loc(mask, blurred_template):
@@ -75,12 +91,13 @@ def _robust_loc(mask, blurred_template):
     from scipy.signal import fftconvolve
     img = gaussian_filter(mask.astype(np.float64), SIGMA)
     tpl = blurred_template
+    if img.shape[0] < tpl.shape[0] or img.shape[1] < tpl.shape[1]:
+        return 0.0, 0, 0
     n = tpl.size
     ts = tpl.sum()
     tvar = (tpl * tpl).sum() - ts * ts / n
-    ones = np.ones_like(tpl)
-    ws = fftconvolve(img, ones, mode="valid")
-    ws2 = fftconvolve(img * img, ones, mode="valid")
+    ws = _box_sum(img, *tpl.shape)                                      # = fftconvolve(img, ones) without two FFTs
+    ws2 = _box_sum(img * img, *tpl.shape)
     num = fftconvolve(img, tpl[::-1, ::-1], mode="valid") - ws * ts / n
     wvar = ws2 - ws * ws / n
     ok = wvar > 5e-4 * n
@@ -96,7 +113,7 @@ class AdaptiveEstimator(E.ChestEstimator):
         super().__init__()
         self.reliable = {t["id"]: V.blur_template(t["array"], SIGMA) for t in self.templates
                          if E.APPROX_COUNTS_MEDIUM_ALONE.get(t["id"])}
-        self.blur_onset = E.OnsetDetector(TRIGGER, REARM, True)
+        self.blur_onset = E.OnsetDetector(TRIGGER, REARM, False)       # no position-jump re-fire (see docstring)
         self.pending_scaled, self.exact_onsets = [], []
         self.votes, self.locked = Counter(), None
         self.stats = {"frames": 0, "prefilter_pass": 0, "stage2_ms": [], "scaled_onsets": 0, "scaled_dropped_for_exact": 0}
@@ -253,6 +270,44 @@ def run(name, out):
     print(name, "done")
 
 
+def truth_times(name, label_name):
+    """Real chest times: verified labels (reference clips) or the by-eye list (sessions)."""
+    if label_name:
+        from fortnite_chest_counter import counter as C
+        return sorted(k[0] for k in C.known_items(label_name) if k[3] == "chest")
+    return SESSION_TRUTH.get(name, [])
+
+
+def score_events(events, name, label_name, regress):
+    """One counted event per real chest: -> dict with real chests found (CERTAIN / counted), duplicates, wrong, unchecked."""
+    truth = truth_times(name, label_name)
+    claimed, out = set(), {"certain": 0, "approx": 0, "real_certain": 0, "real_counted": 0, "duplicates": 0, "wrong": 0,
+                           "unchecked": 0, "real_total": len(truth)}
+    for e in sorted((e for e in events if e["approx_counted"]), key=lambda e: e["time"]):
+        out["approx"] += 1
+        out["certain"] += bool(e["certain_counted"])
+        near = [x for x in truth if abs(x - e["time"]) <= (2.5 if not label_name else 1.6)]
+        if label_name and not near:
+            cls = regress.classify(label_name, e["time"])
+            out["wrong" if cls in ("FALSE", "NONCHEST") else "unchecked"] += 1
+            e["_cls"] = cls
+            continue
+        if not near:
+            out["unchecked"] += 1
+            e["_cls"] = "unchecked"
+            continue
+        x = min(near, key=lambda x: abs(x - e["time"]))
+        if x in claimed:
+            out["duplicates"] += 1
+            e["_cls"] = "DUPLICATE"
+            continue
+        claimed.add(x)
+        out["real_counted"] += 1
+        out["real_certain"] += bool(e["certain_counted"])
+        e["_cls"] = "REAL"
+    return out
+
+
 def summary(out):
     import regress
     lines = []
@@ -262,44 +317,70 @@ def summary(out):
             lines.append(f"{name}: missing")
             continue
         r = json.loads(f.read_text(encoding="utf-8"))
-
-        def cls(t):
-            if r["label_name"]:
-                return regress.classify(r["label_name"], t)
-            truth = SESSION_TRUTH.get(name, [])
-            return "REAL" if any(abs(t - x) <= 2.0 for x in truth) else "unchecked"
-
-        def counts(evs):
-            c = [e for e in evs if e["certain_counted"]]
-            a = [e for e in evs if e["approx_counted"]]
-            return len(c), len(a), sum(cls(e["time"]) == "REAL" for e in a), sum(cls(e["time"]) in ("FALSE", "NONCHEST") for e in a)
-
-        p, a = counts(r["production"]), counts(r["adaptive"])
+        p = score_events(r["production"], name, r["label_name"], regress)
+        a = score_events(r["adaptive"], name, r["label_name"], regress)
         prod_keys = {(round(e["time"], 1), e["adjusted_tier"], e["certain_counted"], e["approx_counted"]) for e in r["production"]}
         changed = [e for e in r["adaptive"] if (round(e["time"], 1), e["adjusted_tier"], e["certain_counted"], e["approx_counted"])
                    not in prod_keys]
         lost = [e for e in r["production"] if not any(abs(e["time"] - x["time"]) < 0.05 and e["adjusted_tier"] == x["adjusted_tier"]
                                                        and e["approx_counted"] == x["approx_counted"] for x in r["adaptive"])]
         fm = r["frame_ms"]
-        lines.append(f"{name:15s} frames {r['frames']:6d} | production C/A {p[0]}/{p[1]} (real {p[2]}, wrong {p[3]}) -> adaptive "
-                     f"C/A {a[0]}/{a[1]} (real {a[2]}, wrong {a[3]}) | new/changed {len(changed)}, lost {len(lost)} | "
-                     f"prefilter {100 * r['prefilter_pass_rate']:.1f}% of frames, misses {r['audit']['rejected_by_prefilter']}/"
-                     f"{r['audit']['qualifying_frames']} qualifying frames | ms/frame prod {fm['production']['mean']:.1f} "
-                     f"(p99 {fm['production']['p99']:.1f}, max {fm['production']['max']:.0f}) adaptive {fm['adaptive']['mean']:.1f} "
-                     f"(p99 {fm['adaptive']['p99']:.1f}, max {fm['adaptive']['max']:.0f}); stage 2 {r['stage2_ms_mean']:.1f} ms when "
-                     f"run | lock {r['locked_scales']}")
+
+        def fmt(c):
+            return (f"C/A {c['certain']}/{c['approx']} = real {c['real_counted']}/{c['real_total']} (certain {c['real_certain']}), "
+                    f"dup {c['duplicates']}, wrong {c['wrong']}, unchecked {c['unchecked']}")
+        lines.append(f"{name}  ({r['frames']} frames)\n   production {fmt(p)}\n   adaptive   {fmt(a)}\n"
+                     f"   events new/changed {len(changed)}, production events lost {len(lost)} | prefilter passes "
+                     f"{100 * r['prefilter_pass_rate']:.1f}% of frames, rejected {r['audit']['rejected_by_prefilter']} of "
+                     f"{r['audit']['qualifying_frames']} qualifying frames | scale lock {r['locked_scales']}\n"
+                     f"   ms/frame production {fm['production']['mean']:.1f} (p99 {fm['production']['p99']:.1f}, max "
+                     f"{fm['production']['max']:.0f}) adaptive {fm['adaptive']['mean']:.1f} (p99 {fm['adaptive']['p99']:.1f}, max "
+                     f"{fm['adaptive']['max']:.0f}); stage 2 mean {r['stage2_ms_mean']:.1f} / max {r['stage2_ms_max']:.0f} ms")
         for e in changed:
-            lines.append(f"      + {e['time']:7.1f}s [{cls(e['time'])}] {e['adjusted_tier']} C={int(e['certain_counted'])} "
+            lines.append(f"      + {e['time']:7.1f}s [{e.get('_cls', '?')}] {e['adjusted_tier']} C={int(e['certain_counted'])} "
                          f"A={int(e['approx_counted'])} {e.get('scaled_popup')} {e['source']}")
         for e in lost:
-            lines.append(f"      - {e['time']:7.1f}s [{cls(e['time'])}] {e['adjusted_tier']} lost/changed")
+            lines.append(f"      - {e['time']:7.1f}s {e['adjusted_tier']} lost/changed")
     text = "\n".join(lines)
     (Path(out) / "summary.txt").write_text(text + "\n", encoding="utf-8")
     print(text)
 
 
+def timing(names, out):
+    """Per-frame cost with nothing else running: production and adaptive in SEPARATE passes over the same frames (each
+    pass decodes the video again; only process_frame is timed), no audit. -> ms/frame mean / p99 / max per source."""
+    E.configure(settings.DEFAULTS["detector"])
+    lines = []
+    for name in names:
+        kind, path, _ = SOURCES[name]
+        res, n = {}, 0
+        for label, cls in (("production", E.ChestEstimator), ("adaptive", AdaptiveEstimator)):
+            ms, stage2, passes = [], [], 0
+            for _, frames in segments(kind, path):
+                est = cls()
+                for t, f in frames:
+                    a = time.perf_counter()
+                    est.process_frame(t, f)
+                    ms.append(1000 * (time.perf_counter() - a))
+                if label == "adaptive":
+                    stage2 += est.stats["stage2_ms"]
+                    passes += est.stats["prefilter_pass"]
+            ms = np.array(ms)
+            n = len(ms)
+            res[label] = (ms.mean(), np.percentile(ms, 99), ms.max(), stage2, passes)
+        p, a = res["production"], res["adaptive"]
+        lines.append(f"{name:10s} {n:6d} frames | production {p[0]:5.1f} ms (p99 {p[1]:5.1f}, max {p[2]:5.1f}) | adaptive "
+                     f"{a[0]:5.1f} ms (p99 {a[1]:5.1f}, max {a[2]:5.1f}) | stage 2 on {100 * a[4] / n:4.1f}% of frames, "
+                     f"{np.mean(a[3]) if a[3] else 0:4.1f} ms mean / {np.max(a[3]) if a[3] else 0:4.1f} max | budget 66.7 ms")
+        print(lines[-1], flush=True)
+    Path(out).mkdir(parents=True, exist_ok=True)
+    (Path(out) / "timing.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "--summary":
         summary(sys.argv[2])
+    elif sys.argv[1] == "--timing":
+        timing(sys.argv[2].split(","), sys.argv[3])
     else:
         run(sys.argv[1], sys.argv[2])

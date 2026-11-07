@@ -65,9 +65,17 @@ class Capture:
             codec_args, codec_name = QUALITIES[quality]
         self.mode, self.fps, self.width, self.height = mode, fps, width, height
         self.before, self.after, self.mark_before, self.mark_after = before, after, mark_before, mark_after
-        self.folder = Path(base_dir).resolve() / datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.video_dir = self.folder / "video"
-        self.video_dir.mkdir(parents=True, exist_ok=False)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for n in range(1, 100):                    # recordings switched within one second get _2, _3 ...
+            self.folder = Path(base_dir).resolve() / (stamp if n == 1 else f"{stamp}_{n}")
+            self.video_dir = self.folder / "video"
+            try:
+                self.video_dir.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise OSError(f"too many recordings started in the same second in {base_dir}")
         free = shutil.disk_usage(self.folder).free
         if free < MIN_FREE_BYTES:
             shutil.rmtree(self.folder, ignore_errors=True)
