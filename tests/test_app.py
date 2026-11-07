@@ -397,6 +397,162 @@ def test_review_scores_live_and_replay_against_the_labels():
         assert "<- different" in text and "real chests 3" in text
 
 
+# ------------------------------------------------------------------ progress / time left
+
+def test_time_left_comes_only_from_measured_speed():
+    from fortnite_chest_counter.progress import Eta, describe, clock_text
+    now = [0.0]
+    eta = Eta(clock=lambda: now[0])
+    assert eta.update(0, 100) is None                                   # first report starts the clock
+    now[0] = 1.0
+    assert eta.update(5, 100) is None                                   # too early to trust
+    for i in range(2, 9):                                               # steady 5 video-s per wall-s
+        now[0] = float(i)
+        left = eta.update(5 * i, 100)
+    assert left is not None and abs(left - (100 - 40) / 5) < 0.5
+    assert Eta(clock=lambda: 0).update(10, 0) is None                    # unknown total: never an estimate
+    assert describe(None) == "" and describe(5) == "less than 10 s left" and describe(130) == "about 2 min 10 s left"
+    assert describe(3 * 3600 + 600) == "about 3 h 10 min left" and clock_text(3725) == "1:02:05"
+
+
+def _synthetic_capture(tmp, seconds=12):
+    from fortnite_chest_counter.capture import Capture
+    cap = Capture(tmp, "session", 15, 1280, 720)
+    _feed(cap, seconds)
+    return Path(cap.close()["folder"])
+
+
+def test_review_reports_progress_finishes_and_can_be_stopped():
+    from fortnite_chest_counter import review
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = _synthetic_capture(tmp)
+        env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONIOENCODING="utf-8")
+        process = subprocess.Popen([sys.executable, "-m", "fortnite_chest_counter", "review", tmp, "--gui"], cwd=tmp, env=env,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        out = process.stdout.read().decode("utf-8")                      # stdin stays open: no stop requested
+        process.wait(timeout=120)
+        msgs = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
+        kinds = [m["type"] for m in msgs]
+        assert process.returncode == 0 and kinds.count("review_start") == 1 and "review_report" in kinds
+        start = next(m for m in msgs if m["type"] == "review_start")
+        assert start["captures"] == 1 and 11.5 < start["total_seconds"] < 12.5
+        done = [m["done"] for m in msgs if m["type"] == "review_progress"]
+        assert done == sorted(done) and done[-1] == start["total_seconds"]
+        assert kinds[-1] == "review_finished"
+        try:                                                            # the Stop button
+            review.run(folder, out=lambda text: None, should_stop=lambda: True)
+            raise AssertionError("review did not stop")
+        except review.Stopped:
+            pass
+
+
+def test_review_of_an_empty_folder_fails_visibly():
+    with tempfile.TemporaryDirectory() as tmp:
+        env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONIOENCODING="utf-8")
+        result = subprocess.run([sys.executable, "-m", "fortnite_chest_counter", "review", tmp, "--gui"], cwd=tmp, env=env,
+                                stdin=subprocess.PIPE, capture_output=True, timeout=60)
+        msgs = [json.loads(l) for l in result.stdout.decode("utf-8").splitlines() if l.startswith("{")]
+        assert result.returncode == 1 and any(m["type"] == "error" and "no diagnostic captures" in m["text"] for m in msgs)
+
+
+def test_recording_can_be_switched_while_counting_continues():
+    """capture marks -> mark -> capture session -> capture off, all while the same live session keeps counting."""
+    from fortnite_chest_counter.input import video_sources as sources
+    real_make, real_ff = sources.make_source, paths.ffmpeg_executable
+    sources.make_source = lambda *a, **k: _FakeSource()
+    paths.ffmpeg_executable = lambda: "ffmpeg"
+    read, write = os.pipe()
+    stdin = sys.stdin
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "config.toml").write_text(f'[capture]\nmode = "off"\ndir = "{Path(tmp).as_posix()}/captures"\n',
+                                                  encoding="utf-8")
+            sys.stdin = os.fdopen(read, "r")
+            script = [(0.6, b"capture marks\n"), (1.4, b"mark\n"), (2.0, b"capture session\n"), (3.0, b"capture off\n"),
+                      (3.6, b"mark\n"), (4.2, b"stop\n")]
+            for at, line in script:
+                threading.Timer(at, lambda line=line: os.write(write, line)).start()
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = C.main(["live", "--gui", "--config", str(Path(tmp) / "config.toml"), "--state", str(Path(tmp) / "s.json"),
+                               "--obs-dir", str(Path(tmp) / "o"), "--log-dir", str(Path(tmp) / "l")])
+            msgs = messages(buf)
+            folders = sorted(p.parent for p in Path(tmp, "captures").glob("*/capture.json"))
+            infos = [json.loads((f / "capture.json").read_text(encoding="utf-8")) for f in folders]
+            first_marks = (folders[0] / "marks.jsonl").read_text(encoding="utf-8").splitlines() if folders else []
+    finally:
+        sources.make_source, paths.ffmpeg_executable, sys.stdin = real_make, real_ff, stdin
+        CONSOLE.machine, paths.HIDE_CHILD_CONSOLES = False, False
+        os.close(write)
+    states = [(m["state"], m.get("mode")) for m in msgs if m["type"] == "capture"]
+    assert code == 0 and ("recording", "marks") in states and ("recording", "session") in states and ("off", "off") in states
+    assert sum(1 for s in states if s[0] == "saved") == 2                    # both recordings finished cleanly
+    assert [i["mode"] for i in infos] == ["marks", "session"] and all(i["ended_at"] for i in infos)
+    assert len(first_marks) == 1                                         # the mark went into the marks-only recording
+    marks = [m for m in msgs if m["type"] == "mark"]
+    assert [m["recorded"] for m in marks] == [True, False]               # the last mark had no recording to go into
+    stopped = msgs[-1]
+    assert stopped["type"] == "stopped" and stopped["stop_reason"] == "stopped in the app" and stopped["frames_processed"] > 50
+
+
+def test_mark_button_and_hotkey_need_a_running_recording():
+    try:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        from fortnite_chest_counter.gui import app as A
+    except ImportError:
+        print("      (skipped: PySide6 not installed)")
+        return
+
+    class FakeWorker:
+        def __init__(self):
+            self.sent = []
+
+        def running(self):
+            return True
+
+        def send(self, line):
+            self.sent.append(line)
+            return True
+
+        def drain(self):
+            return []
+
+    qt = QApplication.instance() or QApplication([])
+    here, app_dir = os.getcwd(), paths.APP_DIR
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chdir(tmp)
+        paths.APP_DIR = Path(tmp)
+        try:
+            win = A.MainWindow()
+            win.timer.stop()
+            fake = FakeWorker()
+            assert win.mark_moment() is False and "start counting" in win.dashboard.rec_status.text()
+            win.worker = fake
+            win.set_mode("counting")
+            assert not win.dashboard.mark.isEnabled() and win.mark_moment() is False
+            assert "recording is off" in win.dashboard.rec_status.text() and fake.sent == []
+            win.dashboard.rec_mode.setCurrentIndex(win.dashboard.rec_mode.findData("marks"))   # while counting
+            assert fake.sent == ["capture marks"]
+            assert settings.load_config(Path(tmp) / "config.toml")[0]["capture"]["mode"] == "marks"
+            win.handle({"type": "capture", "state": "recording", "mode": "marks", "folder": "X"})
+            assert win.dashboard.mark.isEnabled() and win.mark_moment() is True and fake.sent[-1] == "mark"
+            win.handle({"type": "mark", "stamp": "01:02.00", "recorded": True})
+            assert "Marked 01:02.00" in win.dashboard.rec_status.text()
+            win.handle({"type": "capture", "state": "saved", "folder": "OTHER"})            # an older recording finishing
+            assert win.recording is not None
+            win.handle({"type": "capture", "state": "saved", "folder": "X"})
+            assert win.recording is None and not win.dashboard.mark.isEnabled()
+            if win._source_scan is not None:                              # the device scan runs ffmpeg in this folder
+                win._source_scan.join(30)
+            win.preview_reader and win.preview_reader.close()
+            win.deleteLater()
+            qt.processEvents()
+        finally:
+            os.chdir(here)
+            paths.APP_DIR = app_dir
+
+
 def test_marks_arrive_through_the_app_control_channel():
     control = C.AppControl(io.StringIO("mark\nmark missed chest\nstop\n"))
     assert control.requested.wait(2)

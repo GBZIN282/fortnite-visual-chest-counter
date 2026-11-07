@@ -789,6 +789,7 @@ class AppControl:
         self.reason = "stopped in the app"
         self.on_request = None
         self._marks = deque()                   # "mark [label]" lines: the app's Mark button / hotkey
+        self._captures = deque()                # "capture off|marks|events|session": the app's Recording choice
         self._stream = stream if stream is not None else sys.stdin
         threading.Thread(target=self._read, daemon=True, name="app-control").start()
 
@@ -798,6 +799,12 @@ class AppControl:
             marks.append(self._marks.popleft())
         return marks
 
+    def take_capture_requests(self):
+        modes = []
+        while self._captures:
+            modes.append(self._captures.popleft())
+        return modes
+
     def _read(self):
         try:
             for line in self._stream:
@@ -806,6 +813,8 @@ class AppControl:
                     break
                 if command.lower() == "mark":
                     self._marks.append(rest.strip() or "mark")
+                if command.lower() == "capture" and rest.strip().lower() in ("off", "marks", "events", "session"):
+                    self._captures.append(rest.strip().lower())
             else:
                 self.reason = "the app closed"
         except Exception:
@@ -944,9 +953,11 @@ def _open_preview(args):
         return None
 
 
-def _open_capture(cfg, kind, label, res, in_fps, fps):
-    """[capture] mode events/session: start the diagnostic recording. Never fatal - counting goes on without it."""
-    c = cfg["capture"]
+def _open_capture(cfg, kind, label, res, in_fps, fps, mode=None):
+    """[capture] mode marks/events/session (or `mode`): start the diagnostic recording. Never fatal - counting goes on."""
+    c = dict(cfg["capture"])
+    if mode is not None:
+        c["mode"] = mode
     if c["mode"] == "off":
         return None
     try:
@@ -960,7 +971,8 @@ def _open_capture(cfg, kind, label, res, in_fps, fps):
     except Exception as error:
         CONSOLE.warn(f"diagnostic recording could not start ({error}); counting is not affected")
         return None
-    what = "video around every detection and mark" if c["mode"] == "events" else "the whole session"
+    what = {"marks": "video around your marks", "events": "video around every detection and mark"}.get(c["mode"],
+                                                                                                      "the whole session")
     CONSOLE.emit("capture", state="recording", mode=c["mode"], folder=str(capture.folder.resolve()))
     if not CONSOLE.machine:
         CONSOLE.info(f"Diagnostic recording ON ({what}) -> {capture.folder}. Press M to mark a chest the counter missed.")
@@ -975,6 +987,23 @@ def _mark(session, capture, t, label):
     if not CONSOLE.machine:
         CONSOLE.info(f"Marked {row['stamp']}" + (" - kept in the diagnostic recording" if capture is not None else
                                                  " - noted in the session log (turn on [capture] to keep the video)"))
+
+
+def _switch_capture(capture, mode, cfg, kind, label, res, in_fps, fps, session, closing):
+    """The app changed the Recording choice while counting. The old recording finishes in a background thread (the
+    encoder flush must never hold up counting); the new one starts at once, in its own folder. -> the new capture."""
+    if mode == (capture.mode if capture is not None else "off"):
+        return capture
+    if capture is not None:
+        import threading
+        thread = threading.Thread(target=_close_capture, args=(capture, None, session, 20.0), daemon=True,
+                                  name="capture-close")
+        thread.start()
+        closing.append(thread)
+    new = _open_capture(cfg, kind, label, res, in_fps, fps, mode=mode) if mode != "off" else None
+    if new is None:
+        CONSOLE.emit("capture", state="off", mode=mode)
+    return new
 
 
 def _close_capture(capture, flushed, session, timeout):
@@ -1040,6 +1069,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     est = estimator.ChestEstimator()
     preview = _open_preview(args)
     capture = _open_capture(cfg, kind, source.label, res, in_fps, fps)
+    closing_threads = []                                    # recordings switched off mid-session, finishing in background
     session.save()
     session.write_obs()
     session.log.write({"event": "session_start", "app_version": __version__, "source_type": kind, "source": source.label,
@@ -1082,6 +1112,11 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                     capture_warned = True
                     CONSOLE.warn(f"diagnostic recording stopped: {capture.stopped_reason}. Counting continues.")
             now_m = time.monotonic()
+            if control is not None:
+                for mode in control.take_capture_requests():
+                    capture = _switch_capture(capture, mode, cfg, kind, source.label, res, in_fps, fps, session,
+                                               closing_threads)
+                    capture_warned = False
             marks = control.take_marks() if control is not None else []
             if control is None:
                 keys = console_keys()
@@ -1142,6 +1177,8 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
         session.save()
         session.write_obs()
         source.close(wait=not closing)
+        for thread in closing_threads:                     # recordings switched off mid-session: let them finish
+            thread.join(3.0 if closing else 30.0)
         _close_capture(capture, flushed, session, timeout=3.0 if closing else 20.0)
         wall = max(time.monotonic() - wall0, 1e-9)
         stats = {"event": "session_end", "stop_reason": stop_reason, "seconds": round(wall, 1),
@@ -1604,15 +1641,25 @@ def cmd_diagnostics(args):
 
 
 def cmd_review(args):
-    """Replay diagnostic captures through the current detector (review.py)."""
+    """Replay diagnostic captures through the current detector (review.py). --gui: JSON progress for the app."""
     from fortnite_chest_counter import review
     banner()
     folder = Path(args.folder) if args.folder else Path(settings.load_config(getattr(args, "config", None))[0]["capture"]["dir"])
+    gui = getattr(args, "gui", False)
+    control = AppControl() if gui else None
+    started = time.monotonic()
     try:
-        review.run(folder, current_settings=args.current_settings, out=lambda text: CONSOLE.line(text))
+        captures = review.run(folder, current_settings=args.current_settings,
+                              out=(lambda text: None) if gui else (lambda text: CONSOLE.line(text)),
+                              events=(lambda kind, **data: CONSOLE.emit(f"review_{kind}", **data)) if gui else None,
+                              should_stop=(lambda: control.requested.is_set()) if gui else None)
     except FileNotFoundError as error:
-        raise UserError(f"{error}.\nTurn on diagnostic recording (app: Settings; or [capture] mode in config.toml) and "
-                        "count a session first.")
+        raise UserError(f"{error}.\nTurn on diagnostic recording (Dashboard > Recording, or [capture] mode in config.toml) "
+                        "and count a session first.")
+    except review.Stopped:
+        CONSOLE.emit("review_stopped", minutes=round((time.monotonic() - started) / 60, 1))
+        return
+    CONSOLE.emit("review_finished", captures=len(captures), minutes=round((time.monotonic() - started) / 60, 1))
 
 
 def cmd_evaluate(args):
@@ -1711,6 +1758,7 @@ def build_parser():
     p.add_argument("folder", nargs="?", help="a capture folder, or a folder of them (default: [capture] dir)")
     p.add_argument("--current-settings", action="store_true",
                    help="use config.toml's detector settings instead of the ones recorded with each capture")
+    p.add_argument("--gui", action="store_true", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_review)
     p = sub.add_parser("evaluate", help="(development) score a session log against verified knowledge")
     p.add_argument("--name", required=True)

@@ -6,10 +6,10 @@ OFF by default ([capture] mode = "off"); then nothing here runs at all. When on,
 queue. A recorder thread pipes the frames into a separate FFmpeg encoder. Counting never waits for the recording: if the
 encoder falls behind, the RECORDING skips frames (noted in the timeline), never the detector.
 
-Modes
-  events   keep the video around every detection decision (counted or not) and every mark ("the counter missed a
-           chest" - a hotkey/button in the app, M in the console); older video without anything interesting is deleted
-           while recording. Small.
+Modes (switchable while counting from the app: each switch starts a new capture folder)
+  marks    keep only the video around marks ("the counter missed a chest" - Ctrl+Alt+M / Mark moment in the app, M in
+           the console). A rolling buffer on disk: everything else is deleted ~40 s after it was recorded. Smallest.
+  events   also keep the video around every chest decision (counted or not; not around generic button prompts).
   session  keep the whole session.
 
 One folder per counting session: captures/<YYYYmmdd_HHMMSS>/
@@ -36,7 +36,7 @@ from pathlib import Path
 
 from fortnite_chest_counter import paths
 
-MODES = ("off", "events", "session")
+MODES = ("off", "marks", "events", "session")
 SEGMENT_SECONDS = 10
 QUEUE_FRAMES = 30                          # ~2 s of 720p frames (~80 MB) between the counter and the encoder
 MIN_FREE_BYTES = 2 * 1024 ** 3             # do not start below 2 GB free; stop recording below 1 GB
@@ -59,8 +59,8 @@ def mmss(seconds):
 class Capture:
     def __init__(self, base_dir, mode, fps, width, height, before=10, after=10, mark_before=30, mark_after=10,
                  info=None, ffmpeg="ffmpeg", codec_args=None, codec_name=None, quality="standard"):
-        if mode not in ("events", "session"):
-            raise ValueError(f"capture mode must be 'events' or 'session', not {mode!r}")
+        if mode not in ("marks", "events", "session"):
+            raise ValueError(f"capture mode must be 'marks', 'events' or 'session', not {mode!r}")
         if codec_args is None:
             codec_args, codec_name = QUALITIES[quality]
         self.mode, self.fps, self.width, self.height = mode, fps, width, height
@@ -128,7 +128,8 @@ class Capture:
             row["recording_time"] = round(rec, 3)
             self.events.append(row)
             # Generic button prompts (pickups, ammo boxes ...) are frequent and not chest decisions: logged, video not kept.
-            if not (ev.get("source") == "interaction_object" and not ev.get("approx_counted")):
+            # "marks" mode keeps video only around marks.
+            if self.mode == "events" and not (ev.get("source") == "interaction_object" and not ev.get("approx_counted")):
                 self.keep.append((rec - self.before, rec + self.after))
             self._append("events.jsonl", row)
 
@@ -187,8 +188,8 @@ class Capture:
         return self.mode == "session" or any(a < end and b > start for a, b in self.keep)
 
     def _cleanup(self, final=False):
-        """Events mode: delete finished segments nothing interesting can still claim."""
-        if self.mode != "events":
+        """Marks / events mode: delete finished segments nothing interesting can still claim."""
+        if self.mode == "session":
             return
         now = len(self.frame_times) / self.fps
         horizon = now - max(self.before + 8.0, self.mark_before) - SEGMENT_SECONDS     # events finish up to ~6 s late
@@ -249,7 +250,7 @@ class Capture:
             else:
                 runs.append([seg])
         for n, run in enumerate(runs, 1):
-            name = f"clip_{n:03d}.ffconcat" if self.mode == "events" else "session.ffconcat"
+            name = "session.ffconcat" if self.mode == "session" else f"clip_{n:03d}.ffconcat"
             (self.video_dir / name).write_text("ffconcat version 1.0\n" + "".join(f"file {s[0]}\n" for s in run),
                                               encoding="utf-8")
             clips.append({"file": f"video/{name}", "start": run[0][1], "end": run[-1][2],

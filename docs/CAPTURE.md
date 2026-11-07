@@ -14,12 +14,16 @@ live session (app or console) --[capture on]--> captures/<session>/  video + eve
 
 ## Using it
 
-* App: Settings -> **Diagnostic recording** (Off / around detections and marks / whole session). While playing press
-  **Ctrl+Alt+M** (global hotkey, works while Fortnite has the focus) or **Mark moment** when the counter misses a chest.
-  Settings -> **Review captures...** runs the review over the captures folder.
-* Console: `[capture] mode = "events"` (or `"session"`) in config.toml, key **M** to mark,
-  `python -m fortnite_chest_counter review [folder] [--current-settings]`.
-* Marks also work with recording off (written to the session log only).
+* App: Dashboard -> **Diagnostic recording** (Off / only around my marks / around chest decisions and marks / whole
+  session) - switchable while counting: the worker gets `capture <mode>` on its control pipe, the old recording finishes
+  in a background thread (its encoder flush never holds up counting) and the new one starts in its own folder. Press
+  **Ctrl+Alt+M** (global hotkey, works while Fortnite has the focus) or **Mark moment** right after a miss; both are
+  available only while a recording runs (without one there is no video to keep, so the app says so instead).
+  Settings -> **Review captures...** runs `review --gui`: capture N of M, video done / total, time left from measured
+  throughput (`progress.py`: no estimate until a few seconds and a few percent are measured), Stop, failed/finished state.
+* Console: `[capture] mode = "marks" | "events" | "session"` in config.toml, key **M** to mark,
+  `python -m fortnite_chest_counter review [folder] [--current-settings]`. A console mark without a recording is still
+  written to the session log.
 
 ## What is recorded
 
@@ -30,9 +34,9 @@ stops recording below 1 GB. One folder per session (layout in `capture.py`'s doc
 (10-s segments, `clips.json`, an `.ffconcat` playlist per clip), `timeline.csv` (recording frame -> live time),
 `events.jsonl`, `marks.jsonl`, `labels.csv`, `README.txt`.
 
-Events mode keeps, per decision, `before_seconds` (10) / `after_seconds` (10) of video and, per mark,
-`mark_before_seconds` (30) / `mark_after_seconds` (10) - a mark is pressed after the miss. Segments nothing claims are
-deleted about 40 s after they were recorded.
+Marks mode keeps, per mark, `mark_before_seconds` (30) / `mark_after_seconds` (10) - a mark is pressed after the miss.
+Events mode also keeps, per chest decision, `before_seconds` (10) / `after_seconds` (10). In both, segments nothing claims
+are deleted about 40 s after they were recorded (a rolling buffer of ~50 s on disk: ~140 MB standard, ~300 MB lossless).
 
 ## Format choice (measured)
 

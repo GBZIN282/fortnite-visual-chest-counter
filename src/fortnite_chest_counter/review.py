@@ -15,6 +15,7 @@ it never changes the live counter, the OBS files or the recordings.
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
@@ -33,8 +34,8 @@ def frames(path, fps):
     path = Path(path)
     cmd = ["ffmpeg", "-v", "error"] + (["-f", "concat", "-safe", "0"] if path.suffix == ".ffconcat" else [])
     cmd += ["-i", str(path), "-vf", f"{V.scale_filter()},fps={fps}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, bufsize=10 ** 8,
-                               creationflags=paths.child_process_flags())
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               bufsize=10 ** 8, creationflags=paths.child_process_flags())
     size = V.NORMALIZED_WIDTH * V.NORMALIZED_HEIGHT * 3
     i = 0
     try:
@@ -46,32 +47,59 @@ def frames(path, fps):
             i += 1
     finally:
         process.kill()
+        try:
+            process.wait(timeout=5)                 # Windows keeps the clip file locked until FFmpeg has really exited
+        except subprocess.TimeoutExpired:
+            pass
 
 
-def replay(folder, detector_cfg, progress=None):
-    """Run the detector over every clip of one capture. -> list of events with live times."""
+class Stopped(Exception):
+    """The user stopped the review (app: Stop button)."""
+
+
+def clip_seconds(folder):
+    """Recorded video in one capture (sum of its clips), from clips.json."""
+    clips = json.loads((Path(folder) / "video" / "clips.json").read_text(encoding="utf-8"))
+    return sum(max(c["end"] - c["start"], 0.0) for c in clips)
+
+
+def replay(folder, detector_cfg, progress=None, should_stop=None):
+    """Run the detector over every clip of one capture. -> list of events with live times.
+    progress(seconds of this capture's video done) is called about twice a second; should_stop() -> True aborts."""
     from fortnite_chest_counter import estimator
     info = json.loads((folder / "capture.json").read_text(encoding="utf-8"))
     clips = json.loads((folder / "video" / "clips.json").read_text(encoding="utf-8"))
     fps = info["fps"]
     live_t = np.loadtxt(folder / "timeline.csv", delimiter=",", skiprows=1, usecols=1, ndmin=1)
     estimator.configure(detector_cfg)
-    out = []
+    out, done_before, next_report = [], 0.0, 0.0
     for clip in clips:
         est = estimator.ChestEstimator()
         first = int(round(clip["start"] * fps))
         found, last = [], 0.0
-        for t, frame in frames(folder / clip["file"], fps):
-            found += est.process_frame(t, frame)
-            last = t
+        reader = frames(folder / clip["file"], fps)
+        try:
+            for t, frame in reader:
+                found += est.process_frame(t, frame)
+                last = t
+                now = time.monotonic()
+                if now >= next_report:
+                    next_report = now + 0.5
+                    if should_stop is not None and should_stop():
+                        raise Stopped()
+                    if progress:
+                        progress(done_before + t)
+        finally:
+            reader.close()                         # ends FFmpeg now (a stopped review must not leave it reading the clip)
         found += est.flush()
+        done_before += max(clip["end"] - clip["start"], 0.0)
         for ev in found:
             ev.pop("_snapshot", None)
             k = min(first + int(round(ev["time"] * fps)), len(live_t) - 1)
             ev["clip"], ev["clip_time"], ev["live_time"] = clip["file"], round(ev["time"], 3), float(live_t[k])
             out.append(ev)
         if progress:
-            progress(clip, last)
+            progress(done_before)
     return out
 
 
@@ -147,20 +175,39 @@ def report(folder, result, detector_cfg):
     return "\n".join(lines) + "\n"
 
 
-def run(path, current_settings=False, out=print):
+def run(path, current_settings=False, out=print, events=None, should_stop=None):
+    """Review every capture under `path`. `events(kind, **data)` (optional) receives structured progress:
+    start(captures, total_seconds) / capture(index, count, name, mode, clips, seconds, done) / progress(done, total) /
+    report(name, text) - `done`/`total` are seconds of recorded video, over all captures."""
     captures = find_captures(path)
     if not captures:
         raise FileNotFoundError(f"no diagnostic captures found in {path} (folders with capture.json)")
     cfg, _, _ = settings.load_config()
-    totals = {"live": {}, "replay": {}}
+    plan = []
     for folder in captures:
+        try:
+            plan.append((folder, clip_seconds(folder)))
+        except (OSError, ValueError) as error:
+            out(f"Skipping {folder.name}: it has no finished recording ({error}).")
+    total = sum(seconds for _, seconds in plan)
+    emit = events or (lambda kind, **data: None)
+    emit("start", captures=len(plan), total_seconds=round(total, 1))
+    totals = {"live": {}, "replay": {}}
+    done_before = 0.0
+    for index, (folder, seconds) in enumerate(plan, 1):
         info = json.loads((folder / "capture.json").read_text(encoding="utf-8"))
         detector_cfg = cfg["detector"] if current_settings or "detector" not in info.get("app", {}) else \
             {**settings.DEFAULTS["detector"], **info["app"]["detector"]}
         out(f"Replaying {folder.name} ({info.get('mode')}, {info.get('clips', '?')} clip(s)) ...")
-        replayed = replay(folder, detector_cfg)
+        emit("capture", index=index, count=len(plan), name=folder.name, mode=info.get("mode"), clips=info.get("clips"),
+             seconds=round(seconds, 1), done=round(done_before, 1))
+        replayed = replay(folder, detector_cfg, should_stop=should_stop,
+                          progress=lambda d, base=done_before: emit("progress", done=round(base + d, 1), total=round(total, 1)))
+        done_before += seconds
+        emit("progress", done=round(done_before, 1), total=round(total, 1))
         result = compare(folder, replayed)
         text = report(folder, result, detector_cfg)
+        emit("report", name=folder.name, text=text)
         (folder / "review.txt").write_text(text, encoding="utf-8")
         (folder / "review.json").write_text(json.dumps({"detector": detector_cfg, **result,
                                                         "replay_events": [{k: v for k, v in e.items() if k != "popup_trace"}

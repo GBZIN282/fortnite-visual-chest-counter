@@ -25,12 +25,13 @@ runs the same counting engine; verified event by event on the test recordings).
 
 ### New: help improve accuracy - marks and diagnostic recording (optional)
 
-- Missed a chest? Press **Ctrl+Alt+M** while you play (or **Mark moment**) - the moment is noted.
-- **Diagnostic recording** (Settings, off by default) keeps the video the counter analysed: only around every detection
-  and every mark (small), or the whole session. Each session gets a folder with the video, every decision and a
-  `labels.csv` to mark what really happened.
+- **Diagnostic recording** on the Dashboard (off by default), switchable while counting without touching the counts:
+  only around your marks (smallest), around chest decisions and marks, or the whole session.
+- Missed a chest? Press **Ctrl+Alt+M** while you play (or **Mark moment**): the video around it is kept, confirmed with a
+  green "Marked" line. Each recording gets a folder with the video, every decision and a `labels.csv`.
 - **Review captures** replays them through the current version of the counter and compares with what was counted live
-  and with your labels - so every miss becomes a repeatable test for future versions.
+  and with your labels - with progress and time left - so every miss becomes a repeatable test for future versions.
+- **Analyse a recording** shows the time left.
 
 ### Improved
 

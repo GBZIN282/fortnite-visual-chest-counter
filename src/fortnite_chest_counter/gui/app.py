@@ -34,11 +34,16 @@ from fortnite_chest_counter import paths, settings
 from fortnite_chest_counter.gui import theme
 from fortnite_chest_counter.gui.worker import Worker, run_command
 from fortnite_chest_counter.preview import PreviewReader, block_name
+from fortnite_chest_counter.progress import Eta, clock_text, describe
 from fortnite_chest_counter.version import APP_NAME, RELEASE_CHANNEL, TAGLINE, __version__
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 APP_ID = "GabrielGzS.FortniteVisualChestCounter"
 HOTKEY_ID = 0xC0DE
+RECORDING_CHOICES = (("Off", "off"), ("Only around my marks  (smallest)", "marks"),
+                     ("Around chest decisions and my marks", "events"), ("Whole session  (about 10 GB per hour)", "session"))
+RECORDING_TEXT = {"marks": "only around your marks", "events": "around chest decisions and your marks",
+                  "session": "the whole session"}
 REPO_URL = "https://github.com/GabrielGzS/fortnite-visual-chest-counter"
 LOG_LIMIT = 3000
 fmt = settings.format_count
@@ -354,6 +359,8 @@ class VideoDialog(QDialog):
         self.resize(640, 520)
         self.worker = Worker()
         self.duration = None
+        self.span = None                                                # (first, last) second of video to analyse
+        self.eta = Eta()
         self.result_dir = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
@@ -419,6 +426,7 @@ class VideoDialog(QDialog):
         self.approx.set_value(0)
         self.progress.setValue(0)
         self.open_results.setEnabled(False)
+        self.eta = Eta()
         try:
             self.worker.start(["video", self.path.text(), "--gui"])
         except OSError as error:
@@ -433,14 +441,23 @@ class VideoDialog(QDialog):
             kind = message.get("type")
             if kind == "video_start":
                 self.duration = message.get("duration")
-                self.state.setText(f"Analysing {message.get('name', '')} ...")
+                first = message.get("start") or 0.0
+                last = message.get("until") or self.duration
+                self.span = (first, last) if last else None
+                self.state.setText(f"Analysing {message.get('name', '')} ..."
+                                   + ("" if self.span else "  (the video's length is unknown: no time estimate)"))
             elif kind == "progress":
                 t = message.get("t", 0)
-                if self.duration:
-                    self.progress.setValue(int(1000 * min(t / self.duration, 1.0)))
-                    self.state.setText(f"{C.mmss(t)[:-3]} of {C.mmss(self.duration)[:-3]} analysed")
+                if self.span and self.span[1] > self.span[0]:
+                    done, total = t - self.span[0], self.span[1] - self.span[0]
+                    self.progress.setRange(0, 1000)
+                    self.progress.setValue(int(1000 * min(done / total, 1.0)))
+                    left = describe(self.eta.update(done, total))
+                    self.state.setText(f"{clock_text(t)} of {clock_text(self.span[1])} analysed   ·   "
+                                       + (left or "measuring speed..."))
                 else:
                     self.progress.setRange(0, 0)
+                    self.state.setText(f"{clock_text(t)} analysed")
                 self.certain.set_value(message.get("certain", 0))
                 self.approx.set_value(message.get("approx", 0))
             elif kind == "event":
@@ -492,44 +509,128 @@ class VideoDialog(QDialog):
 # ==================================================================
 
 class ReviewDialog(QDialog):
-    """Runs `review` over the captures folder and shows its report."""
+    """Runs `review --gui` over the captures folder: which capture, how much video, time left, then each report."""
+
+    MODES = {"events": "around chest decisions and marks", "marks": "around marks", "session": "whole session"}
 
     def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle("Review captures")
-        self.resize(820, 600)
+        self.resize(840, 640)
+        self.worker = Worker()
+        self.eta = Eta()
+        self.total = None
+        self.failed = None
+        self.finished = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
-        layout.addWidget(label("Replays every diagnostic capture through the current detector and compares it with what was "
-                               "counted live and with your labels (labels.csv in each capture folder). This takes about a "
-                               "third of the recorded time.", "hint", wrap=True))
+        layout.setSpacing(10)
+        self.title = label("Reviewing captures", "cardTitle")
+        layout.addWidget(self.title)
+        layout.addWidget(label("Every diagnostic capture is replayed through the current detector and compared with what was "
+                               "counted live and with your labels (labels.csv in each capture folder).", "hint", wrap=True))
+        self.current = label("Starting...", wrap=True)
+        layout.addWidget(self.current)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)                                    # busy until the total is known
+        self.progress.setTextVisible(False)
+        layout.addWidget(self.progress)
+        self.detail = label("", "hint")
+        layout.addWidget(self.detail)
         self.text = QPlainTextEdit()
         self.text.setObjectName("report")
         self.text.setReadOnly(True)
-        self.text.setPlainText("Reviewing...")
         layout.addWidget(self.text, 1)
         row = QHBoxLayout()
+        row.addWidget(button("Open captures folder", on_click=self._open_folder))
         row.addStretch(1)
-        row.addWidget(button("Copy", on_click=lambda: QApplication.clipboard().setText(self.text.toPlainText())))
+        row.addWidget(button("Copy report", on_click=lambda: QApplication.clipboard().setText(self.text.toPlainText())))
+        self.stop = button("Stop", "danger", on_click=self._stop)
+        row.addWidget(self.stop)
         row.addWidget(button("Close", on_click=self.close))
         layout.addLayout(row)
-        self._result = None
-
-        def work():
-            try:
-                self._result = run_command(["review"], timeout=6 * 3600)[1]
-            except Exception as error:
-                self._result = f"The review could not run: {error}"
-
-        threading.Thread(target=work, daemon=True).start()
+        try:
+            self.worker.start(["review", "--gui"])
+        except OSError as error:
+            self._fail(f"The review could not start ({error}).")
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self._check)
-        self.timer.start(300)
+        self.timer.timeout.connect(self._pump)
+        self.timer.start(100)
 
-    def _check(self):
-        if self._result is not None:
-            self.timer.stop()
-            self.text.setPlainText(self._result.strip())
+    def _open_folder(self):
+        cfg, _ = load_cfg()
+        open_path(paths.APP_DIR / cfg["capture"]["dir"])
+
+    def _stop(self):
+        self.worker.stop()
+        self.stop.setEnabled(False)
+        self.current.setText("Stopping...")
+
+    def _fail(self, text):
+        self.failed = text
+        self.title.setText("Review failed")
+        self.title.setStyleSheet(f"color: {theme.REJECT};")
+        self.current.setText(text)
+        self.progress.setRange(0, 1000)
+        self.stop.setEnabled(False)
+
+    def _show_progress(self, done):
+        if not self.total:
+            return
+        self.progress.setRange(0, 1000)
+        self.progress.setValue(int(1000 * min(done / self.total, 1.0)))
+        left = describe(self.eta.update(done, self.total))
+        self.detail.setText(f"{clock_text(done)} of {clock_text(self.total)} of recorded video reviewed   ·   "
+                            + (left or "measuring speed..."))
+
+    def _pump(self):
+        for m in self.worker.drain():
+            kind = m.get("type")
+            if kind == "review_start":
+                self.total = m.get("total_seconds") or 0.0
+                if not m.get("captures"):
+                    self._fail("No finished captures were found.")
+            elif kind == "review_capture":
+                mode = self.MODES.get(m.get("mode"), m.get("mode") or "")
+                self.current.setText(f"Capture {m['index']} of {m['count']}:  {m['name']}   ·   {mode}   ·   "
+                                     f"{clock_text(m.get('seconds', 0))} of video in {m.get('clips', '?')} clip(s)")
+                self._show_progress(m.get("done", 0.0))
+            elif kind == "review_progress":
+                self._show_progress(m.get("done", 0.0))
+            elif kind == "review_report":
+                self.text.appendPlainText(m.get("text", "").rstrip() + "\n")
+            elif kind == "review_finished":
+                self.finished = True
+                self.title.setText("Review finished")
+                self.title.setStyleSheet(f"color: {theme.CERTAIN};")
+                self.current.setText(f"{m.get('captures', 0)} capture(s) reviewed in {m.get('minutes', 0)} min. "
+                                     "Reports are also saved as review.txt in each capture folder.")
+                self.progress.setRange(0, 1000)
+                self.progress.setValue(1000)
+                self.detail.setText("")
+            elif kind == "review_stopped":
+                self.finished = True
+                self.title.setText("Review stopped")
+                self.current.setText("Stopped. The reports above are complete; the rest was not reviewed.")
+                self.detail.setText("")
+            elif kind == "error":
+                self._fail(str(m.get("text", "The review failed.")))
+            elif kind == "exit":
+                self.stop.setEnabled(False)
+                if not self.finished and not self.failed:
+                    tail = "\n".join(self.worker.stderr_tail[-6:])
+                    self._fail("The review stopped unexpectedly." + (f"\n{tail}" if tail else ""))
+
+    def closeEvent(self, event):
+        if self.worker.running():
+            self.worker.stop()
+            deadline = time.monotonic() + 5
+            while self.worker.running() and time.monotonic() < deadline:
+                QApplication.processEvents()
+                time.sleep(0.05)
+            self.worker.kill()
+        self.timer.stop()
+        super().closeEvent(event)
 
 
 class Dashboard(QWidget):
@@ -605,14 +706,23 @@ class Dashboard(QWidget):
         row = QHBoxLayout()
         self.metrics = label("Not counting.", "metrics", wrap=True)
         row.addWidget(self.metrics, 1)
-        self.mark = button("Mark moment", tip="The counter missed a chest or got one wrong? Mark it (also Ctrl+Alt+M "
-                                              "while you play). With diagnostic recording on, the video is kept.",
-                           on_click=win.mark_moment)
-        row.addWidget(self.mark)
         self.analyse = button("Analyse a recording...", tip="Count the chests in a video file (does not change your counter)",
                               on_click=win.analyse_video)
         row.addWidget(self.analyse)
         box_layout.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(label("Diagnostic recording"))
+        self.rec_mode = QComboBox()
+        for text, mode in RECORDING_CHOICES:
+            self.rec_mode.addItem(text, mode)
+        self.rec_mode.setToolTip("Keeps the video the counter analysed so a missed chest can be replayed and checked. "
+                                 "Can be changed while counting; the counts are not affected.")
+        row.addWidget(self.rec_mode, 1)
+        self.mark = button("Mark moment   Ctrl+Alt+M", on_click=win.mark_moment)
+        row.addWidget(self.mark)
+        box_layout.addLayout(row)
+        self.rec_status = label("", "hint", wrap=True)
+        box_layout.addWidget(self.rec_status)
         layout.addWidget(box)
 
         # optional panels
@@ -852,17 +962,11 @@ class SettingsPage(QWidget):
         layout.addWidget(box)
 
         box, box_layout = card("Diagnostic recording (advanced)",
-                               "Records exactly what the counter analyses, so a missed or wrong chest can be replayed and "
-                               "checked later - and every future version can be tested on it. Press Ctrl+Alt+M while you "
-                               "play (or Mark moment on the Dashboard) when the counter misses a chest.")
-        self.capture = QComboBox()
-        self.capture.addItem("Off", "off")
-        self.capture.addItem("Keep the video around every chest decision and every mark (smaller)", "events")
-        self.capture.addItem("Keep the whole session (large: about 10 GB per hour)", "session")
-        box_layout.addWidget(self.capture)
+                               "Keeps exactly what the counter analyses, so a missed or wrong chest can be replayed and "
+                               "checked later - and every future version can be tested on it. Turn it on and off on the "
+                               "Dashboard, also while counting; press Ctrl+Alt+M while you play when the counter misses a chest.")
         self.lossless = QCheckBox("Lossless: the replay sees exactly what the counter saw (about twice the disk space)")
         box_layout.addWidget(self.lossless)
-        self.capture.currentIndexChanged.connect(lambda _: self.lossless.setEnabled(self.capture.currentData() != "off"))
         row = QHBoxLayout()
         row.addWidget(button("Open captures folder", on_click=self._open_captures))
         row.addWidget(button("Review captures...", tip="Replay every capture through the current detector and compare it "
@@ -894,9 +998,7 @@ class SettingsPage(QWidget):
         self.logging.setChecked(cfg["logging"]["enabled"])
         self.snapshots.setChecked(cfg["logging"]["save_snapshots"])
         self.snapshots.setEnabled(cfg["logging"]["enabled"])
-        self.capture.setCurrentIndex(max(self.capture.findData(cfg["capture"]["mode"]), 0))
         self.lossless.setChecked(cfg["capture"]["quality"] == "lossless")
-        self.lossless.setEnabled(cfg["capture"]["mode"] != "off")
         self.saved.setText("")
 
     def save(self):
@@ -905,8 +1007,7 @@ class SettingsPage(QWidget):
             C.update_config_file(config_file(), "detector", {"languages": langs})
             C.update_config_file(config_file(), "logging", {"enabled": self.logging.isChecked(),
                                                             "save_snapshots": self.snapshots.isChecked()})
-            C.update_config_file(config_file(), "capture", {"mode": self.capture.currentData(),
-                                                            "quality": "lossless" if self.lossless.isChecked() else "standard"})
+            C.update_config_file(config_file(), "capture", {"quality": "lossless" if self.lossless.isChecked() else "standard"})
         except (C.UserError, OSError) as error:
             show_error(self, str(error))
             return
@@ -1041,7 +1142,8 @@ class MainWindow(QMainWindow):
         self.last_status = None
         self.error_seen = False
         self.quit_when_stopped = False
-        self.recording = None
+        self.recording = None                   # the worker's current capture ("capture" message), None = not recording
+        self.marks_this_session = 0
         self.hotkey = None
         self.sources = []
         self._source_scan = None
@@ -1056,6 +1158,9 @@ class MainWindow(QMainWindow):
         self.slow.timeout.connect(self._tick_slow)
         self.preview_timer = QTimer(self)
         self.preview_timer.timeout.connect(self._tick_preview)
+        self._mark_flash = QTimer(self)                     # the "Marked" confirmation stays visible a few seconds
+        self._mark_flash.setSingleShot(True)
+        self._mark_flash.timeout.connect(self.update_recording_ui)
 
         root = QWidget()
         outer = QHBoxLayout(root)
@@ -1081,6 +1186,10 @@ class MainWindow(QMainWindow):
             self.write_obs_files(quiet=True)          # a fresh unzip/update carries zero placeholders
         self.overlay.load()
         self.settings_page.load()
+        rec = self.dashboard.rec_mode
+        rec.setCurrentIndex(max(rec.findData(load_cfg()[0]["capture"]["mode"]), 0))
+        rec.currentIndexChanged.connect(lambda _: self.recording_changed())
+        self.update_recording_ui()
         self.refresh_viewers()
         self.refresh_sources()
         cfg, warnings = load_cfg()
@@ -1258,7 +1367,11 @@ class MainWindow(QMainWindow):
         d.source.setEnabled(not running)
         d.refresh.setEnabled(not running)
         d.analyse.setEnabled(not running)
-        d.mark.setEnabled(mode == "counting")
+        if mode == "connecting":
+            self.marks_this_session = 0
+        if not running:
+            self.recording = None
+        self.update_recording_ui()
         if mode == "counting":
             self.started_at = time.monotonic()
         if not running:
@@ -1295,20 +1408,34 @@ class MainWindow(QMainWindow):
             self.error_seen = True
             self.dashboard.show_banner(str(message.get("text", "")))
         elif kind == "mark":
-            kept = (" - the video is kept in the diagnostic recording" if message.get("recorded") else
-                    " - noted in the session log (turn on Diagnostic recording in Settings to keep the video)")
+            self.marks_this_session += 1
+            kept = (" - the video before and after it is kept" if message.get("recorded") else
+                    " - noted in the session log only (no recording was running)")
             self.add_log({"type": "info", "text": f"Marked {message.get('stamp', '')}{kept}."})
+            self.dashboard.rec_status.setText(f"\u2713  Marked {message.get('stamp', '')}{kept}.")
+            self.dashboard.rec_status.setStyleSheet(f"color: {theme.CERTAIN};")
+            self._mark_flash.start(4000)
         elif kind == "capture":
             if message.get("state") == "recording":
                 self.recording = message
-                self.add_log({"type": "info", "text": "Diagnostic recording on ("
-                              + ("around detections and marks" if message.get("mode") == "events" else "whole session")
-                              + f"): {message.get('folder', '')}"})
-            elif message.get("state") == "saved":
+                rec = self.dashboard.rec_mode                   # show what the worker really records
+                index = rec.findData(message.get("mode"))
+                if index >= 0 and index != rec.currentIndex():
+                    rec.blockSignals(True)
+                    rec.setCurrentIndex(index)
+                    rec.blockSignals(False)
+                self.add_log({"type": "info", "text": f"Diagnostic recording on ({RECORDING_TEXT.get(message.get('mode'), '')})"
+                              f": {message.get('folder', '')}"})
+            elif message.get("state") == "off":
                 self.recording = None
+                self.add_log({"type": "info", "text": "Diagnostic recording off."})
+            elif message.get("state") == "saved":
+                if self.recording and self.recording.get("folder") == message.get("folder"):
+                    self.recording = None
                 self.add_log({"type": "info", "text": f"Diagnostic recording saved: {message.get('clips', 0)} clip(s), "
                               f"{message.get('video_mb', 0)} MB, {message.get('events', 0)} decisions, "
                               f"{message.get('marks', 0)} marks -> {message.get('folder', '')}"})
+            self.update_recording_ui()
         elif kind == "stopped":
             minutes = (message.get("seconds") or 0) / 60
             self.add_log({"type": "line", "text": f"Stopped ({message.get('stop_reason', '')}). Analysed "
@@ -1456,10 +1583,59 @@ class MainWindow(QMainWindow):
         self.add_log({"type": "info", "text": f"Counter {what}."
                       + (" The running counter picks it up within a second." if self.worker.running() else "")})
 
+    def mark_available(self):
+        return self.mode == "counting" and self.recording is not None
+
     def mark_moment(self):
-        """Mark button / Ctrl+Alt+M: tell the worker to note this moment (and keep its video when recording)."""
-        if self.mode == "counting":
-            self.worker.send("mark")
+        """Mark button / Ctrl+Alt+M: keep the video around this moment. Only while a recording is running - without one
+        there is no video to keep, and the app says so instead of pretending."""
+        if self.mark_available():
+            return self.worker.send("mark")
+        why = ("start counting first" if self.mode != "counting" else
+               "diagnostic recording is off - choose 'Only around my marks' on the Dashboard (it keeps the 30 s before "
+               "each mark)")
+        self.add_log({"type": "warn", "text": f"Mark not saved: {why}."})
+        self.dashboard.rec_status.setText(f"Mark not saved: {why}.")
+        self.dashboard.rec_status.setStyleSheet(f"color: {theme.WARN};")
+        self._mark_flash.start(5000)
+        return False
+
+    def recording_changed(self):
+        """The Diagnostic recording choice: saved for next time and, while counting, applied at once (counts continue)."""
+        mode = self.dashboard.rec_mode.currentData()
+        try:
+            C.update_config_file(config_file(), "capture", {"mode": mode})
+        except (C.UserError, OSError) as error:
+            show_error(self, f"Could not save the recording choice: {error}")
+        if self.worker.running():
+            self.worker.send(f"capture {mode}")
+        self.update_recording_ui()
+
+    def update_recording_ui(self):
+        d = self.dashboard
+        d.mark.setEnabled(self.mark_available())
+        d.mark.setToolTip("Keep the video around this moment (the counter missed a chest or got one wrong). Also "
+                          "Ctrl+Alt+M while you play." if self.mark_available() else
+                          "Available while counting with a diagnostic recording running: choose a recording mode on the "
+                          "left ('Only around my marks' is the smallest).")
+        if self._mark_flash.isActive():
+            return
+        d.rec_status.setStyleSheet("")
+        mode = d.rec_mode.currentData()
+        if self.recording is not None:
+            d.rec_status.setText(f"\u25cf  Recording {RECORDING_TEXT.get(self.recording.get('mode'), '')}   \u00b7   "
+                                 f"{self.marks_this_session} mark(s) this session   \u00b7   press Ctrl+Alt+M right after a "
+                                 "missed chest")
+            d.rec_status.setStyleSheet(f"color: {theme.REJECT};")
+        elif self.mode == "counting" and mode != "off":
+            d.rec_status.setText("Starting the recording...")
+        elif self.mode == "counting":
+            d.rec_status.setText("Not recording. Marks need a recording: 'Only around my marks' keeps just the 30 seconds "
+                                 "before and 10 after each mark.")
+        elif mode != "off":
+            d.rec_status.setText(f"Starts with counting: keeps {RECORDING_TEXT[mode]} (captures folder).")
+        else:
+            d.rec_status.setText("Off. Turn it on to replay missed chests later; you can also do it while counting.")
 
     def register_hotkey(self):
         """Ctrl+Alt+M anywhere (also while Fortnite has the focus) = Mark moment."""

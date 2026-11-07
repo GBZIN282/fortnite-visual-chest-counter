@@ -54,7 +54,7 @@ DEFAULTS = {
         "dir": "logs",
     },
     "capture": {
-        "mode": "off",                          # off | events (video around detections and marks) | session (everything)
+        "mode": "off",                          # off | marks (video around marks) | events (+ around detections) | session
         "before_seconds": 10,                   # video kept before / after each detection decision
         "after_seconds": 10,
         "mark_before_seconds": 30,              # video kept before / after a mark ("the counter missed a chest")
@@ -75,7 +75,7 @@ _SOURCES = ("obs-camera", "device", "desktop", "file")
 SHOW_MODES = ("both", "certain", "approx")
 BOTH_LAYOUTS = ("stacked", "inline")
 VERBOSITY_LEVELS = ("minimal", "normal", "debug")
-CAPTURE_MODES = ("off", "events", "session")
+CAPTURE_MODES = ("off", "marks", "events", "session")
 CAPTURE_QUALITIES = ("standard", "lossless")
 # The app's language choice -> [detector] languages. "Both" is not automatic detection: it checks both words all the time.
 # (Real "Auto" - identify the language per match - needs match recognition first; see docs/ROADMAP.md.)

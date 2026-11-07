@@ -210,20 +210,23 @@ full screen with the HUD. It is off by default and costs nothing while hidden.</
 <p>Everything is also written to the session log in <code>logs\</code>, whether the panels are open or not.</p>
 
 <h2 id="capture">Help improve accuracy: marks and diagnostic recording (optional)</h2>
-<p><b>Mark a moment:</b> when the counter misses a chest (or counts something that was not one), press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd>
-while you play &mdash; it works while Fortnite has the focus &mdash; or click <b>Mark moment</b> on the Dashboard. The mark is written to the session
-log and shown in the Activity panel.</p>
-<p><b>Diagnostic recording</b> (Settings &rarr; <b>Diagnostic recording</b>, off by default) also keeps the video the counter analysed, so each
-mark becomes a repeatable test case:</p>
+<p>On the Dashboard, <b>Diagnostic recording</b> (off by default) keeps the video the counter analysed, so a missed chest can be replayed
+and checked later. Change it any time, <b>also while counting</b> &mdash; the counts are not affected:</p>
 <ul>
-  <li><b>Keep the video around every chest decision and every mark</b> &mdash; the smaller choice: about 20 seconds per chest and 40 seconds per mark.</li>
-  <li><b>Keep the whole session</b> &mdash; large (about 10 GB per hour), for finding chests the counter never noticed.</li>
+  <li><b>Only around my marks</b> &mdash; the smallest: the counter keeps a short rolling recording and saves only the 30 seconds before and
+  10 seconds after each mark.</li>
+  <li><b>Around chest decisions and my marks</b> &mdash; also about 20 seconds around every chest the counter considered.</li>
+  <li><b>Whole session</b> &mdash; large (about 10 GB per hour), for finding chests the counter never noticed.</li>
 </ul>
-<p><b>Lossless</b> (a tick box under the choice) keeps exactly what the counter saw, so a replay reproduces every decision, at about twice
-the disk space.</p>
+<p><b>Mark a missed chest:</b> right after the counter misses a chest (or counts something that was not one), press
+<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> &mdash; it works while Fortnite has the focus &mdash; or click <b>Mark moment</b>. A green
+&ldquo;Marked&rdquo; line confirms it. Marking needs a recording running (there is no video to keep otherwise), so the button is grey and the
+hotkey only shows a hint while recording is off. <b>Lossless</b> (Settings) keeps exactly what the counter saw, so a replay reproduces every
+decision, at about twice the disk space.</p>
 <p>Each counting session gets a folder in <code>captures\</code> with the video, every decision the counter made and a <code>labels.csv</code> you can
 fill in (<code>chest</code>, <code>not_chest</code>, <code>missed_chest</code>&hellip;). <b>Review captures&hellip;</b> on the Settings page replays every
-capture through the current version of the counter and compares it with what was counted live and with your labels. Recording never slows
+capture through the current version of the counter and compares it with what was counted live and with your labels; it shows which capture it is
+on, how much video is done and, once the speed is known, the time left. Recording never slows
 down or changes the counting; it needs at least 2 GB of free disk space and stops by itself below 1 GB.</p>
 
 <h2 id="video">Counting a recorded video</h2>

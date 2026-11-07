@@ -27,7 +27,10 @@ decision is sent whatever the verbosity; the app filters what it shows. Still pr
 import json
 import os
 import sys
+import threading
 import time
+
+_EMIT_LOCK = threading.Lock()
 
 VERBOSITY = ("minimal", "normal", "debug")
 _CODES = {"green": "92", "yellow": "93", "red": "91", "cyan": "96", "magenta": "95", "dim": "90", "bold": "1",
@@ -116,9 +119,12 @@ class Console:
         """Machine mode only: one JSON message on its own line. A no-op in the text console."""
         if not self.machine:
             return
+        line = json.dumps({"type": kind, **data}, ensure_ascii=True, default=_jsonable) + "\n"
         try:
-            print(json.dumps({"type": kind, **data}, ensure_ascii=True, default=_jsonable), flush=True)
-        except (OSError, ValueError):
+            with _EMIT_LOCK:                            # a recording finishing in the background may emit too
+                sys.stdout.write(line)
+                sys.stdout.flush()
+        except (OSError, ValueError, AttributeError):
             pass                                        # the app closed the pipe: never disturb counting
 
     def line(self, text="", style=None):
