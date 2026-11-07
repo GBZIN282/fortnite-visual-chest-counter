@@ -29,12 +29,37 @@ with Normal/Debug detail, optional live preview, Overlay page, Edit counts / Res
 diagnostics); counting stays in the separate `live --gui` worker; small reproducible launcher exe; trimmed signed Qt files;
 signature report per build; tests in `tests/test_app.py`.
 
+First hands-on test (user, 2026-11-07): counting chests from a heavily compressed YouTube VOD through the app. The earlier
+Twitch/Switch source did not count; cause not yet known (input, HUD scale or pipeline - not compression alone).
+
+Also done: **diagnostic capture** ([CAPTURE.md](CAPTURE.md)) - optional recording of exactly what the detector analysed
+(around decisions/marks, or the whole session), Ctrl+Alt+M / Mark moment / console M, labels.csv, and the `review`
+command that replays captures through the current detector. This is the data foundation for everything below.
+
 Before release:
-1. The user's hands-on test of the app with OBS (single PC), then the two-PC / Wi-Fi tests.
+1. The user's hands-on test of the app with OBS (single PC), then the two-PC / Wi-Fi tests - with diagnostic recording on.
 2. Smart App Control: read PC B's CodeIntegrity log (which file is refused); decide on signing (see WINDOWS_TRUST.md).
 3. Rewrite the top-level `README.md` for the app (it still describes the v0.1.1 `.bat` workflow); final build + scan.
 4. Optional, separate change: replace `scipy.signal.fftconvolve` with NumPy (-107 unsigned files, -30 MB) only if the
    regression harness shows identical events.
+
+## After v0.2.0 - from chest counter to match analytics (user's direction, 2026-11-07)
+
+Every step is built and measured on labelled captures (CAPTURE.md), never by tuning thresholds on a single example.
+Order agreed with the user: capture -> better chest recognition -> match lifecycle -> Auto language -> analytics.
+
+- **B. More loot types** - Sprite Chests and other chest variants whose pop-up word is not just "CHEST", as their own event
+  types next to normal chests (one opening = one event, whatever clues fire).
+- **C. Rewards** - the "YOU FOUND ..." animation and similar reward cues as their own events, de-duplicated across frames
+  and linked to the chest they came from when the footage shows it.
+- **D. Match lifecycle** - lobby / in match / eliminated / spectating / results from several on-screen cues (a small state
+  machine, never one cue alone), so every chest and reward belongs to a match.
+- **D2. Auto language** - only after D: identify English or Portuguese (Brazil) from the pop-ups at the start of each match,
+  lock it for the match, reset at the lobby; while unsure keep checking both (never trade chests for a language guess).
+  Until then the Settings choice is English / Portuguese (Brazil) / Both - "Both" is not automatic detection.
+- **E. Analytics** - per match and per session: chests, Sprite Chests, rewards, rates, history. Observed frequencies are
+  not Fortnite's drop odds: they need the right denominator (e.g. rewards per eligible Sprite Chest), mode/season
+  separation and a known detection completeness before they mean anything.
 
 ## v0.1.2 candidates - video inputs (not implemented yet)
 

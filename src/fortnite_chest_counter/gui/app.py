@@ -38,6 +38,7 @@ from fortnite_chest_counter.version import APP_NAME, RELEASE_CHANNEL, TAGLINE, _
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 APP_ID = "GabrielGzS.FortniteVisualChestCounter"
+HOTKEY_ID = 0xC0DE
 REPO_URL = "https://github.com/GabrielGzS/fortnite-visual-chest-counter"
 LOG_LIMIT = 3000
 fmt = settings.format_count
@@ -490,6 +491,47 @@ class VideoDialog(QDialog):
 # pages
 # ==================================================================
 
+class ReviewDialog(QDialog):
+    """Runs `review` over the captures folder and shows its report."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Review captures")
+        self.resize(820, 600)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 18)
+        layout.addWidget(label("Replays every diagnostic capture through the current detector and compares it with what was "
+                               "counted live and with your labels (labels.csv in each capture folder). This takes about a "
+                               "third of the recorded time.", "hint", wrap=True))
+        self.text = QPlainTextEdit()
+        self.text.setObjectName("report")
+        self.text.setReadOnly(True)
+        self.text.setPlainText("Reviewing...")
+        layout.addWidget(self.text, 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(button("Copy", on_click=lambda: QApplication.clipboard().setText(self.text.toPlainText())))
+        row.addWidget(button("Close", on_click=self.close))
+        layout.addLayout(row)
+        self._result = None
+
+        def work():
+            try:
+                self._result = run_command(["review"], timeout=6 * 3600)[1]
+            except Exception as error:
+                self._result = f"The review could not run: {error}"
+
+        threading.Thread(target=work, daemon=True).start()
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._check)
+        self.timer.start(300)
+
+    def _check(self):
+        if self._result is not None:
+            self.timer.stop()
+            self.text.setPlainText(self._result.strip())
+
+
 class Dashboard(QWidget):
     def __init__(self, win):
         super().__init__()
@@ -563,6 +605,10 @@ class Dashboard(QWidget):
         row = QHBoxLayout()
         self.metrics = label("Not counting.", "metrics", wrap=True)
         row.addWidget(self.metrics, 1)
+        self.mark = button("Mark moment", tip="The counter missed a chest or got one wrong? Mark it (also Ctrl+Alt+M "
+                                              "while you play). With diagnostic recording on, the video is kept.",
+                           on_click=win.mark_moment)
+        row.addWidget(self.mark)
         self.analyse = button("Analyse a recording...", tip="Count the chests in a video file (does not change your counter)",
                               on_click=win.analyse_video)
         row.addWidget(self.analyse)
@@ -784,12 +830,16 @@ class SettingsPage(QWidget):
         self.win = win
         layout = page_layout(self, "Settings", "Changes are saved in config.toml next to the app and are used the next time "
                                                "you press Start counting.")
-        box, box_layout = card("Fortnite language", "Which word the counter reads in the chest pop-up. Ticking only your "
-                                                    "language gives slightly fewer false alarms.")
-        self.lang_en = QCheckBox("English  (CHEST)")
-        self.lang_pt = QCheckBox("Portuguese  (BAÚ)")
-        box_layout.addWidget(self.lang_en)
-        box_layout.addWidget(self.lang_pt)
+        box, box_layout = card("Fortnite language", "The language your Fortnite is set to - the counter reads the word in the "
+                                                    "chest pop-up (CHEST / BAÚ). \"Both\" checks the two words all the time: "
+                                                    "only useful for mixed footage. One language avoids a small risk of false "
+                                                    "alarms and a little work, but does not find more chests (no difference on "
+                                                    "our English test videos). Automatic language detection will come once the "
+                                                    "app recognises matches.")
+        self.language = QComboBox()
+        for text, langs in settings.LANGUAGE_CHOICES:
+            self.language.addItem(text, langs)
+        box_layout.addWidget(self.language)
         layout.addWidget(box)
 
         box, box_layout = card("Session logs", "Logs are small text files in the logs folder. They are what you send when "
@@ -799,6 +849,24 @@ class SettingsPage(QWidget):
         box_layout.addWidget(self.logging)
         box_layout.addWidget(self.snapshots)
         self.logging.toggled.connect(self.snapshots.setEnabled)
+        layout.addWidget(box)
+
+        box, box_layout = card("Diagnostic recording (advanced)",
+                               "Records exactly what the counter analyses, so a missed or wrong chest can be replayed and "
+                               "checked later - and every future version can be tested on it. Press Ctrl+Alt+M while you "
+                               "play (or Mark moment on the Dashboard) when the counter misses a chest.")
+        self.capture = QComboBox()
+        self.capture.addItem("Off", "off")
+        self.capture.addItem("Keep the video around every detection and every mark (small)", "events")
+        self.capture.addItem("Keep the whole session (large: about 4 GB per hour)", "session")
+        box_layout.addWidget(self.capture)
+        row = QHBoxLayout()
+        row.addWidget(button("Open captures folder", on_click=self._open_captures))
+        row.addWidget(button("Review captures...", tip="Replay every capture through the current detector and compare it "
+                                                       "with what was counted live and with your labels",
+                             on_click=lambda: ReviewDialog(self).exec()))
+        row.addStretch(1)
+        box_layout.addLayout(row)
         layout.addWidget(box)
 
         box, box_layout = card("Advanced", "Everything else (detector cadence, which evidence counts) is in config.toml. "
@@ -819,28 +887,31 @@ class SettingsPage(QWidget):
 
     def load(self):
         cfg, _ = load_cfg()
-        langs = cfg["detector"]["languages"]
-        self.lang_en.setChecked("en" in langs)
-        self.lang_pt.setChecked("pt" in langs)
+        self.language.setCurrentIndex(settings.language_choice(cfg["detector"]["languages"]))
         self.logging.setChecked(cfg["logging"]["enabled"])
         self.snapshots.setChecked(cfg["logging"]["save_snapshots"])
         self.snapshots.setEnabled(cfg["logging"]["enabled"])
+        self.capture.setCurrentIndex(max(self.capture.findData(cfg["capture"]["mode"]), 0))
         self.saved.setText("")
 
     def save(self):
-        langs = [code for code, box in (("en", self.lang_en), ("pt", self.lang_pt)) if box.isChecked()]
-        if not langs:
-            show_error(self, "Tick at least one language.")
-            return
+        langs = self.language.currentData()
         try:
             C.update_config_file(config_file(), "detector", {"languages": langs})
             C.update_config_file(config_file(), "logging", {"enabled": self.logging.isChecked(),
                                                             "save_snapshots": self.snapshots.isChecked()})
+            C.update_config_file(config_file(), "capture", {"mode": self.capture.currentData()})
         except (C.UserError, OSError) as error:
             show_error(self, str(error))
             return
         self.saved.setText("Saved." + (" Stop and start counting to use the new settings."
                                        if self.win.worker.running() else ""))
+
+    def _open_captures(self):
+        cfg, _ = load_cfg()
+        folder = paths.APP_DIR / cfg["capture"]["dir"]
+        folder.mkdir(parents=True, exist_ok=True)
+        open_path(folder)
 
     def _open_config(self):
         path = config_file()
@@ -964,6 +1035,8 @@ class MainWindow(QMainWindow):
         self.last_status = None
         self.error_seen = False
         self.quit_when_stopped = False
+        self.recording = None
+        self.hotkey = None
         self.sources = []
         self._source_scan = None
         self._state_mtime = None
@@ -1159,7 +1232,7 @@ class MainWindow(QMainWindow):
         if self.worker.running():
             self.set_mode("stopping")
             self.worker.stop()
-            QTimer.singleShot(10000, self._stop_timeout)
+            QTimer.singleShot(30000, self._stop_timeout)   # a diagnostic recording may need a few seconds to finish
 
     def _stop_timeout(self):
         if self.mode == "stopping" and self.worker.running():
@@ -1179,6 +1252,7 @@ class MainWindow(QMainWindow):
         d.source.setEnabled(not running)
         d.refresh.setEnabled(not running)
         d.analyse.setEnabled(not running)
+        d.mark.setEnabled(mode == "counting")
         if mode == "counting":
             self.started_at = time.monotonic()
         if not running:
@@ -1214,6 +1288,21 @@ class MainWindow(QMainWindow):
         elif kind == "error":
             self.error_seen = True
             self.dashboard.show_banner(str(message.get("text", "")))
+        elif kind == "mark":
+            kept = (" - the video is kept in the diagnostic recording" if message.get("recorded") else
+                    " - noted in the session log (turn on Diagnostic recording in Settings to keep the video)")
+            self.add_log({"type": "info", "text": f"Marked {message.get('stamp', '')}{kept}."})
+        elif kind == "capture":
+            if message.get("state") == "recording":
+                self.recording = message
+                self.add_log({"type": "info", "text": "Diagnostic recording on ("
+                              + ("around detections and marks" if message.get("mode") == "events" else "whole session")
+                              + f"): {message.get('folder', '')}"})
+            elif message.get("state") == "saved":
+                self.recording = None
+                self.add_log({"type": "info", "text": f"Diagnostic recording saved: {message.get('clips', 0)} clip(s), "
+                              f"{message.get('video_mb', 0)} MB, {message.get('events', 0)} decisions, "
+                              f"{message.get('marks', 0)} marks -> {message.get('folder', '')}"})
         elif kind == "stopped":
             minutes = (message.get("seconds") or 0) / 60
             self.add_log({"type": "line", "text": f"Stopped ({message.get('stop_reason', '')}). Analysed "
@@ -1274,7 +1363,8 @@ class MainWindow(QMainWindow):
             self.read_state()
         elif self.mode == "counting" and self.started_at is not None:
             elapsed = int(time.monotonic() - self.started_at)
-            parts = [f"Counting for {elapsed // 3600}:{elapsed // 60 % 60:02d}:{elapsed % 60:02d}"]
+            parts = [("\u25cf REC   " if self.recording else "")
+                     + f"Counting for {elapsed // 3600}:{elapsed // 60 % 60:02d}:{elapsed % 60:02d}"]
             c = self.connected or {}
             if c.get("resolution"):
                 parts.append(f"video {c['resolution'][0]} x {c['resolution'][1]}"
@@ -1359,6 +1449,39 @@ class MainWindow(QMainWindow):
         what = "reset to 0" if action == "reset" else f"set to CERTAIN {fmt(certain)} / APPROX {fmt(approx)}"
         self.add_log({"type": "info", "text": f"Counter {what}."
                       + (" The running counter picks it up within a second." if self.worker.running() else "")})
+
+    def mark_moment(self):
+        """Mark button / Ctrl+Alt+M: tell the worker to note this moment (and keep its video when recording)."""
+        if self.mode == "counting":
+            self.worker.send("mark")
+
+    def register_hotkey(self):
+        """Ctrl+Alt+M anywhere (also while Fortnite has the focus) = Mark moment."""
+        try:
+            ok = ctypes.windll.user32.RegisterHotKey(int(self.winId()), HOTKEY_ID, 0x0002 | 0x0001 | 0x4000, ord("M"))
+        except Exception:
+            ok = False
+        self.hotkey = bool(ok)
+        if not ok:
+            self.dashboard.mark.setToolTip("The counter missed a chest or got one wrong? Mark it. (Ctrl+Alt+M is used by "
+                                           "another program, so only this button works.)")
+
+    def nativeEvent(self, event_type, message):
+        try:
+            if event_type == b"windows_generic_MSG" or event_type == "windows_generic_MSG":
+                from ctypes import wintypes
+                msg = wintypes.MSG.from_address(int(message))
+                if msg.message == 0x0312 and msg.wParam == HOTKEY_ID:                  # WM_HOTKEY
+                    self.mark_moment()
+                    return True, 0
+        except Exception:
+            pass
+        return super().nativeEvent(event_type, message)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.hotkey is None:
+            self.register_hotkey()
 
     def analyse_video(self):
         if self.worker.running():

@@ -255,6 +255,132 @@ def test_child_process_flags_hide_consoles_only_when_asked_or_windowless():
         paths.HIDE_CHILD_CONSOLES = before
 
 
+# ------------------------------------------------------------------ language choice (Settings dropdown)
+
+def test_language_choices_map_to_the_detector_setting_and_back():
+    names = [name for name, _ in settings.LANGUAGE_CHOICES]
+    assert names == ["English", "Portuguese (Brazil)", "Both (English + Portuguese (Brazil))"]
+    for i, (_, langs) in enumerate(settings.LANGUAGE_CHOICES):
+        assert settings.language_choice(langs) == i
+    assert settings.language_choice(["pt", "en"]) == 2                 # order does not matter
+    assert settings.language_choice(settings.DEFAULTS["detector"]["languages"]) == 2   # default unchanged: both
+
+
+def test_language_choice_is_saved_and_existing_configs_keep_their_language():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "config.toml"
+        # a v0.1.x config that chose Portuguese only, with comments and other settings
+        path.write_text('# my settings\n[detector]\nlanguages = ["pt"]\nprocess_fps = 15\n\n[display]\nshow = "approx"\n',
+                        encoding="utf-8")
+        cfg, _, warnings = settings.load_config(path)
+        assert not warnings and settings.language_choice(cfg["detector"]["languages"]) == 1
+        for _, langs in settings.LANGUAGE_CHOICES:                       # what the dropdown writes, read back
+            C.update_config_file(path, "detector", {"languages": langs})
+            cfg, _, warnings = settings.load_config(path)
+            assert not warnings and cfg["detector"]["languages"] == langs
+        text = path.read_text(encoding="utf-8")
+        assert "# my settings" in text and 'show = "approx"' in text and "process_fps = 15" in text
+
+
+# ------------------------------------------------------------------ diagnostic capture
+
+def _feed(cap, seconds, fps=15, start_t=100.0):
+    """Synthetic frames (a moving bar, cheap to encode) at recording speed, never overrunning the queue."""
+    for i in range(int(seconds * fps)):
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        frame[:, (i * 7) % 1280] = 255
+        while cap._queue.full():
+            time.sleep(0.002)
+        cap.offer(start_t + i / fps, frame)
+
+
+def test_capture_events_mode_keeps_only_the_video_around_decisions_and_marks():
+    from fortnite_chest_counter.capture import Capture, read_labels
+    from fortnite_chest_counter import review
+    with tempfile.TemporaryDirectory() as tmp:
+        cap = Capture(tmp, "events", 15, 1280, 720, before=10, after=10, mark_before=30, mark_after=10)
+        _feed(cap, 35)                                                  # live t 100 .. 135
+        cap.add_events([{"event_id": "E0001", "time": 135.0, "stamp": "02:15.00", "source": "popup",
+                         "adjusted_tier": "HIGH", "popup_score": 0.9, "popup_template": "en:CHEST",
+                         "certain_counted": True, "approx_counted": True, "reason": "t"}])
+        _feed(cap, 35, start_t=135.0)                                   # live t 135 .. 170
+        cap.add_mark(160.0, "missed")
+        summary = cap.close()
+        video = Path(summary["folder"]) / "video"
+        kept = sorted(p.name for p in video.glob("seg_*.mkv"))
+        # keep windows (recording s): event 35 -> 25..45, mark 60 -> 30..70  =>  segments 20-30 .. 60-70 only
+        assert kept == [f"seg_{i:05d}.mkv" for i in range(2, 7)], kept
+        clips = json.loads((video / "clips.json").read_text(encoding="utf-8"))
+        assert len(clips) == 1 and clips[0]["start"] == 20.0 and clips[0]["end"] == 70.0
+        assert summary["frames_not_recorded"] == 0 and summary["events"] == 1 and summary["marks"] == 1
+        events = [json.loads(l) for l in (Path(summary["folder"]) / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert events[0]["recording_time"] == 35.0 and events[0]["clip_time"] == 15.0
+        n = sum(1 for _ in review.frames(Path(summary["folder"]) / clips[0]["file"], 15))
+        assert n == 750                                                 # 50 s of the clip, every frame
+        labels = (Path(summary["folder"]) / "labels.csv").read_text(encoding="utf-8-sig").splitlines()
+        assert labels[0].startswith("kind,id,live_time") and len(labels) == 3 and read_labels(summary["folder"]) == []
+
+
+def test_capture_session_mode_keeps_everything_and_off_starts_nothing():
+    from fortnite_chest_counter.capture import Capture
+    with tempfile.TemporaryDirectory() as tmp:
+        cap = Capture(tmp, "session", 15, 1280, 720)
+        _feed(cap, 22)
+        summary = cap.close()
+        clips = json.loads((Path(summary["folder"]) / "video" / "clips.json").read_text(encoding="utf-8"))
+        assert [c["file"] for c in clips] == ["video/session.ffconcat"] and clips[0]["end"] > 21.9
+        cfg = tmp_cfg(tmp)
+        assert cfg["capture"]["mode"] == "off" and C._open_capture(cfg, "file", "x", None, None, 15) is None
+
+
+def test_capture_never_blocks_counting_even_if_the_encoder_dies():
+    from fortnite_chest_counter.capture import Capture
+    with tempfile.TemporaryDirectory() as tmp:
+        cap = Capture(tmp, "events", 15, 1280, 720)
+        cap._encoder.kill()                                             # the encoder vanishes mid-session
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        t0 = time.monotonic()
+        for i in range(200):                                            # far more than the queue holds
+            cap.offer(i / 15, frame)
+        assert time.monotonic() - t0 < 1.0                              # offer() never waits
+        summary = cap.close(timeout=3)
+        assert time.monotonic() - t0 < 15 and summary["stopped_early"]
+
+
+def test_marks_arrive_through_the_app_control_channel():
+    control = C.AppControl(io.StringIO("mark\nmark missed chest\nstop\n"))
+    assert control.requested.wait(2)
+    assert control.take_marks() == ["mark", "missed chest"] and control.take_marks() == []
+
+
+def test_live_capture_replays_to_the_same_decisions():
+    """End to end on a real recording: live worker with capture -> review replays the clips -> same decisions."""
+    if not SAMPLE.exists():
+        print("      (skipped: samples/ not present)")
+        return
+    from fortnite_chest_counter import review
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        (tmp / "config.toml").write_text('[capture]\nmode = "events"\ndir = "captures"\n', encoding="utf-8")
+        cmd = [sys.executable, "-m", "fortnite_chest_counter", "live", "--gui", "--source", "file", "--video", str(SAMPLE),
+               "--start", "55", "--duration", "28", "--config", str(tmp / "config.toml"),
+               "--state", str(tmp / "s.json"), "--obs-dir", str(tmp / "o"), "--log-dir", str(tmp / "l")]
+        env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONIOENCODING="utf-8")
+        process = subprocess.Popen(cmd, cwd=tmp, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        threading.Timer(12, lambda: (process.stdin.write(b"mark\n"), process.stdin.flush())).start()
+        out = process.stdout.read().decode("utf-8", "replace")
+        process.wait(timeout=120)
+        msgs = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
+        saved = next(m for m in msgs if m["type"] == "capture" and m["state"] == "saved")
+        assert saved["events"] >= 2 and saved["marks"] == 1 and saved["frames_not_recorded"] == 0, saved
+        folder = Path(saved["folder"])
+        live = [json.loads(l) for l in (folder / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+        replayed = review.replay(folder, tmp_cfg(tmp)["detector"])
+        result = review.compare(folder, replayed)
+        assert result["same"] == len(live), review.report(folder, result, tmp_cfg(tmp)["detector"])
+
+
 # ------------------------------------------------------------------ same counts as the command line (needs samples/)
 
 def _run_video(args, tmp):

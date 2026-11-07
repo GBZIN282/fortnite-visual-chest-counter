@@ -48,6 +48,18 @@ class Worker:
         err.start()
         threading.Thread(target=self._wait, args=(self.process, out, err), daemon=True, name="worker-wait").start()
 
+    def send(self, line):
+        """One command line to the worker (e.g. "mark"); ignored if it is not running."""
+        process = self.process
+        if process is None or process.poll() is not None:
+            return False
+        try:
+            process.stdin.write(line.encode("utf-8") + b"\n")
+            process.stdin.flush()
+            return True
+        except OSError:
+            return False
+
     def stop(self):
         """Ask for a normal stop (the worker finishes the current frame, saves, reports and exits)."""
         process = self.process

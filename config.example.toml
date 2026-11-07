@@ -7,8 +7,10 @@
 # Lines starting with # are comments.
 
 [detector]
-# Which languages Fortnite is set to. "en" = English (CHEST), "pt" = Portuguese (BAU).
-# Using only your language gives slightly fewer false alarms:  languages = ["en"]
+# Which languages Fortnite is set to. "en" = English (CHEST), "pt" = Portuguese (Brazil) (BAU). The app's Settings page
+# sets this for you (English / Portuguese (Brazil) / Both).
+# Use only the language your Fortnite is set to, e.g.  languages = ["en"]  (the other word is not needed and only
+# adds a small risk of false alarms; on our English test videos it made no difference).
 languages = ["en", "pt"]
 
 # How many frames per second are analysed (5-30). 15 is what the detector was tested at.
@@ -89,6 +91,20 @@ log_candidates = true
 # logs/snapshots/. Turn on if you want to report missed or wrong chests: the pictures show exactly what it saw.
 save_snapshots = false
 dir = "logs"
+
+[capture]
+# Diagnostic recording (advanced, OFF by default): records exactly what the counter analyses, so a missed or wrong chest
+# can be replayed and checked later. Easiest: the app's Settings page. Mark a moment with Ctrl+Alt+M (app) or M (console).
+#   "off"     = nothing is recorded (the default)
+#   "events"  = keep the video around every detection and every mark (small)
+#   "session" = keep the whole session (large: several GB per hour)
+mode = "off"
+before_seconds = 10
+after_seconds = 10
+mark_before_seconds = 30
+mark_after_seconds = 10
+# Folder for the recordings (one sub-folder per counting session).
+dir = "captures"
 
 [live]
 # Where the video comes from:

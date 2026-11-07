@@ -23,6 +23,15 @@ runs the same counting engine; verified event by event on the test recordings).
 - **Settings** (Fortnite language, session logs and pop-up pictures) and **Help & diagnostics** (setup steps, one-click
   diagnostics report with Copy).
 
+### New: help improve accuracy - marks and diagnostic recording (optional)
+
+- Missed a chest? Press **Ctrl+Alt+M** while you play (or **Mark moment**) - the moment is noted.
+- **Diagnostic recording** (Settings, off by default) keeps the video the counter analysed: only around every detection
+  and every mark (small), or the whole session. Each session gets a folder with the video, every decision and a
+  `labels.csv` to mark what really happened.
+- **Review captures** replays them through the current version of the counter and compares with what was counted live
+  and with your labels - so every miss becomes a repeatable test for future versions.
+
 ### Improved
 
 - Opening the app writes your saved numbers back into the OBS text files (after an update, no extra step).

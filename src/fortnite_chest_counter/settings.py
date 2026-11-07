@@ -53,6 +53,14 @@ DEFAULTS = {
         "save_snapshots": False,                # save a small PNG of the popup area for every popup event (for reporting misses)
         "dir": "logs",
     },
+    "capture": {
+        "mode": "off",                          # off | events (video around detections and marks) | session (everything)
+        "before_seconds": 10,                   # video kept before / after each detection decision
+        "after_seconds": 10,
+        "mark_before_seconds": 30,              # video kept before / after a mark ("the counter missed a chest")
+        "mark_after_seconds": 10,
+        "dir": "captures",
+    },
     "live": {
         "source": "obs-camera",                 # obs-camera | device | desktop | file
         "device": "OBS Virtual Camera",         # DirectShow device name for --source device
@@ -66,6 +74,16 @@ _SOURCES = ("obs-camera", "device", "desktop", "file")
 SHOW_MODES = ("both", "certain", "approx")
 BOTH_LAYOUTS = ("stacked", "inline")
 VERBOSITY_LEVELS = ("minimal", "normal", "debug")
+CAPTURE_MODES = ("off", "events", "session")
+# The app's language choice -> [detector] languages. "Both" is not automatic detection: it checks both words all the time.
+# (Real "Auto" - identify the language per match - needs match recognition first; see docs/ROADMAP.md.)
+LANGUAGE_CHOICES = (("English", ["en"]), ("Portuguese (Brazil)", ["pt"]), ("Both (English + Portuguese (Brazil))", ["en", "pt"]))
+
+
+def language_choice(languages):
+    """Index in LANGUAGE_CHOICES for a [detector] languages list (any order); unknown combinations -> Both."""
+    wanted = set(languages or [])
+    return next((i for i, (_, langs) in enumerate(LANGUAGE_CHOICES) if set(langs) == wanted), len(LANGUAGE_CHOICES) - 1)
 TEXT_TEMPLATES = ("certain_text", "approx_text", "combined_status_format")
 # Placeholders every display text may use. {count} = this text's own number (CERTAIN for certain_text, APPROX for
 # approx_text); {certain} and {approx} (or {approximate}) = either number, anywhere.
@@ -99,6 +117,11 @@ def _check(section, key, value):
         return (value in _TIERS, f"must be one of {list(_TIERS)}")
     if key == "source":
         return (value in _SOURCES, f"must be one of {list(_SOURCES)}")
+    if section == "capture" and key.endswith("_seconds"):
+        return (isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 120,
+                "must be a whole number of seconds from 0 to 120")
+    if section == "capture" and key == "mode":
+        return (value in CAPTURE_MODES, f"must be one of {list(CAPTURE_MODES)}")
     if key in ("monitor", "status_interval_seconds"):
         return (isinstance(value, int) and not isinstance(value, bool) and value >= 1, "must be a whole number >= 1")
     if isinstance(default, list):

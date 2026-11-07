@@ -19,6 +19,8 @@ src/fortnite_chest_counter/
   gui/              the desktop app (v0.2.0, PySide6): app.py (window, pages, dialogs), worker.py (runs + observes the
                     counting worker), theme.py, assets/ (icon PNGs)
   preview.py        shared-memory picture for the app's optional live preview (no Qt)
+  capture.py        optional diagnostic recording of the detector's input + decisions + marks ([capture], CAPTURE.md)
+  review.py         `review` command: replay captures through the current detector, compare with live + labels
   templates/        runtime detector templates (.npy) - tracked in Git, REQUIRED at runtime
 packaging/          build_release.py (embeddable Python + verified numpy/scipy/PySide6 + bundled ffmpeg + launcher + zip),
                     launcher/ (launcher.c, manifest, app.ico), make_icon.py, README.html, notices, licenses/ (LGPL/GPL texts)
@@ -131,6 +133,10 @@ launchers (.bat/.cmd/.ps1/.vbs/.lnk) or any executable other than the launcher, 
   running worker adopts them via `sync_external_changes`; the Overlay page writes `config.toml`, which the worker's
   `DisplayConfigWatcher` applies within a second. `tests/test_app.py` proves the app's worker counts exactly the same events
   as the command line on a recording.
+* **Diagnostic capture** (`capture.py`, [CAPTURE.md](CAPTURE.md)): off by default; when on, the live loop queues each
+  analysed frame (non-blocking, bounded) for a separate FFmpeg encoder writing 10-s segments; events mode deletes segments
+  no decision or mark claims. Marks: app `mark` line on the worker's stdin (Mark moment / Ctrl+Alt+M via RegisterHotKey),
+  console key M. `review` replays clips with a fresh estimator and compares (MATCH_SECONDS 0.6, as regress.py).
 * **Live preview** (`preview.py`): a named shared-memory block. The worker copies a 640x360 picture at most 5x/s, only while
   the app shows the preview (one flag read per frame otherwise), after counting the frame.
 * **No console flashes:** a process without a console window (the app, its worker, its diagnostics run) starts ffmpeg with

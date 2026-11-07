@@ -678,16 +678,22 @@ def disable_quick_edit():
         pass
 
 
-def quit_requested():
-    """True if the user pressed Q in the console window (no Ctrl+C needed, no 'terminate batch job?' prompt)."""
+def console_keys():
+    """Keys pressed in the console window since the last call (lower case). Q = stop (no Ctrl+C needed, no 'terminate
+    batch job?' prompt), M = mark this moment for the diagnostic capture."""
+    keys = set()
     try:
         import msvcrt
         while msvcrt.kbhit():
-            if msvcrt.getwch().lower() == "q":
-                return True
+            keys.add(msvcrt.getwch().lower())
     except Exception:
         pass
-    return False
+    return keys
+
+
+def quit_requested():
+    """True if the user pressed Q in the console window."""
+    return "q" in console_keys()
 
 
 def _kernel32():
@@ -782,14 +788,24 @@ class AppControl:
         self.requested = threading.Event()
         self.reason = "stopped in the app"
         self.on_request = None
+        self._marks = deque()                   # "mark [label]" lines: the app's Mark button / hotkey
         self._stream = stream if stream is not None else sys.stdin
         threading.Thread(target=self._read, daemon=True, name="app-control").start()
+
+    def take_marks(self):
+        marks = []
+        while self._marks:
+            marks.append(self._marks.popleft())
+        return marks
 
     def _read(self):
         try:
             for line in self._stream:
-                if line.strip().lower() in ("stop", "quit"):
+                command, _, rest = line.strip().partition(" ")
+                if command.lower() in ("stop", "quit"):
                     break
+                if command.lower() == "mark":
+                    self._marks.append(rest.strip() or "mark")
             else:
                 self.reason = "the app closed"
         except Exception:
@@ -928,6 +944,58 @@ def _open_preview(args):
         return None
 
 
+def _open_capture(cfg, kind, label, res, in_fps, fps):
+    """[capture] mode events/session: start the diagnostic recording. Never fatal - counting goes on without it."""
+    c = cfg["capture"]
+    if c["mode"] == "off":
+        return None
+    try:
+        from fortnite_chest_counter.capture import Capture
+        from fortnite_chest_counter.input import video_sources as sources
+        capture = Capture(c["dir"], c["mode"], fps, sources.WIDTH, sources.HEIGHT, c["before_seconds"], c["after_seconds"],
+                          c["mark_before_seconds"], c["mark_after_seconds"], ffmpeg=paths.ffmpeg_executable() or "ffmpeg",
+                          info={"version": __version__, "source": label, "source_type": kind, "input_resolution": res,
+                                "input_fps": in_fps, "detector": cfg["detector"]})
+    except Exception as error:
+        CONSOLE.warn(f"diagnostic recording could not start ({error}); counting is not affected")
+        return None
+    what = "video around every detection and mark" if c["mode"] == "events" else "the whole session"
+    CONSOLE.emit("capture", state="recording", mode=c["mode"], folder=str(capture.folder.resolve()))
+    if not CONSOLE.machine:
+        CONSOLE.info(f"Diagnostic recording ON ({what}) -> {capture.folder}. Press M to mark a chest the counter missed.")
+    return capture
+
+
+def _mark(session, capture, t, label):
+    """A moment the user flagged (usually: 'the counter missed a chest just now')."""
+    row = capture.add_mark(t, label) if capture is not None else {"time": round(t, 3), "stamp": mmss(t), "label": label}
+    session.log.write({"event": "mark", **row, "recorded": capture is not None, "logged_at": now_iso()})
+    CONSOLE.emit("mark", stamp=row["stamp"], label=label, recorded=capture is not None, mark_id=row.get("mark_id"))
+    if not CONSOLE.machine:
+        CONSOLE.info(f"Marked {row['stamp']}" + (" - kept in the diagnostic recording" if capture is not None else
+                                                 " - noted in the session log (turn on [capture] to keep the video)"))
+
+
+def _close_capture(capture, flushed, session, timeout):
+    if capture is None:
+        return
+    try:
+        if flushed:
+            capture.add_events(flushed)
+        summary = capture.close(timeout=timeout)
+    except Exception as error:
+        CONSOLE.warn(f"the diagnostic recording could not be finished cleanly ({error})")
+        return
+    session.log.write({"event": "capture", **summary, "logged_at": now_iso()})
+    CONSOLE.emit("capture", state="saved", **summary)
+    if not CONSOLE.machine:
+        try:
+            CONSOLE.info(f"Diagnostic recording saved: {summary['clips']} clip(s), {summary['video_mb']} MB, "
+                         f"{summary['events']} decisions, {summary['marks']} marks -> {summary['folder']}")
+        except (OSError, ValueError):
+            pass
+
+
 def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None, control=None):
     session = CounterSession(cfg, reset=args.reset)
     state = session.state
@@ -970,6 +1038,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
 
     est = estimator.ChestEstimator()
     preview = _open_preview(args)
+    capture = _open_capture(cfg, kind, source.label, res, in_fps, fps)
     session.save()
     session.write_obs()
     session.log.write({"event": "session_start", "app_version": __version__, "source_type": kind, "source": source.label,
@@ -984,6 +1053,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     watcher = DisplayConfigWatcher(args)
     processed_at_status = processed_at_log = 0
     stop_reason = "stream ended"
+    capture_warned = False
     if guard is not None:
         guard.on_request = source.request_stop
     try:
@@ -997,16 +1067,29 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                 stop_reason = "duration reached"
                 break
             t0 = time.perf_counter()
-            session.apply(est.process_frame(t, frame), t)
+            applied = session.apply(est.process_frame(t, frame), t)
             dt = time.perf_counter() - t0
             recent.append(dt)
             n_frames, total_s, max_s = n_frames + 1, total_s + dt, max(max_s, dt)
             if preview is not None:
                 preview.offer(t, frame)                     # after counting; skipped unless the app shows the preview
+            if capture is not None:                         # after counting; never blocks (see capture.py)
+                capture.offer(t, frame)
+                if applied:
+                    capture.add_events(applied)
+                if capture.stopped_reason and not capture_warned:
+                    capture_warned = True
+                    CONSOLE.warn(f"diagnostic recording stopped: {capture.stopped_reason}. Counting continues.")
             now_m = time.monotonic()
-            if control is None and quit_requested():
-                stop_reason = "Q pressed"
-                break
+            marks = control.take_marks() if control is not None else []
+            if control is None:
+                keys = console_keys()
+                if "q" in keys:
+                    stop_reason = "Q pressed"
+                    break
+                marks += ["mark"] if "m" in keys else []
+            for label in marks:
+                _mark(session, capture, t, label)
             if now_m - last_sync >= 1.0:
                 last_sync = now_m
                 if session.sync_external_changes():
@@ -1054,10 +1137,11 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
         if closing:
             stop_reason = guard.reason or "window closed (X)"
         # Persist first (the console may already be gone when the window was closed), print last.
-        session.apply(est.flush(), source.elapsed(), quiet=closing)
+        flushed = session.apply(est.flush(), source.elapsed(), quiet=closing)
         session.save()
         session.write_obs()
         source.close(wait=not closing)
+        _close_capture(capture, flushed, session, timeout=3.0 if closing else 20.0)
         wall = max(time.monotonic() - wall0, 1e-9)
         stats = {"event": "session_end", "stop_reason": stop_reason, "seconds": round(wall, 1),
                  "frames_processed": source.frames_processed, "frames_dropped": source.frames_dropped,
@@ -1518,6 +1602,18 @@ def cmd_diagnostics(args):
         pass
 
 
+def cmd_review(args):
+    """Replay diagnostic captures through the current detector (review.py)."""
+    from fortnite_chest_counter import review
+    banner()
+    folder = Path(args.folder) if args.folder else Path(settings.load_config(getattr(args, "config", None))[0]["capture"]["dir"])
+    try:
+        review.run(folder, current_settings=args.current_settings, out=lambda text: CONSOLE.line(text))
+    except FileNotFoundError as error:
+        raise UserError(f"{error}.\nTurn on diagnostic recording (app: Settings; or [capture] mode in config.toml) and "
+                        "count a session first.")
+
+
 def cmd_evaluate(args):
     events = [json.loads(line) for line in Path(args.log).read_text(encoding="utf-8").splitlines() if line.strip()]
     events = [e for e in events if e.get("source") not in ("manual", None) and "time" in e]
@@ -1610,6 +1706,11 @@ def build_parser():
     p.add_argument("--certain", type=int, default=0)
     p.add_argument("--approx", type=int, default=0)
     p.set_defaults(func=cmd_adjust)
+    p = sub.add_parser("review", parents=[common], help="replay diagnostic captures through the current detector")
+    p.add_argument("folder", nargs="?", help="a capture folder, or a folder of them (default: [capture] dir)")
+    p.add_argument("--current-settings", action="store_true",
+                   help="use config.toml's detector settings instead of the ones recorded with each capture")
+    p.set_defaults(func=cmd_review)
     p = sub.add_parser("evaluate", help="(development) score a session log against verified knowledge")
     p.add_argument("--name", required=True)
     p.add_argument("--log", required=True)
