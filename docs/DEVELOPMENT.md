@@ -1,6 +1,7 @@
 # Development notes
 
-End users: read the top-level [README.md](../README.md). This file is for contributors.
+End users: read the top-level [README.md](../README.md) and the setup guides in [guides/](guides/README.md). This file is
+for contributors.
 The original research log (how the detector was built and validated) is in [DETECTOR_NOTES.md](DETECTOR_NOTES.md).
 
 ## Repository layout

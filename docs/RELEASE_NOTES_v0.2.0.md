@@ -4,6 +4,12 @@
 
 Windows 10 / 11 · nothing to install · extract the zip and open **`Fortnite Visual Chest Counter.exe`**
 
+> ✅ **Tested after release (2026-11-07): dual-PC over your local network with SRT, no capture card.** The counter runs on
+> the streaming PC; nothing from this project runs on the gaming PC. Many chests counted, no noticeable lag.
+> **[Step-by-step SRT setup guide](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/obs-dual-pc-srt.md)** ·
+> [all setup guides](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/README.md).
+> This is a documented compatibility test, not a software change: same download, same SHA-256.
+
 **The biggest update so far: a real Windows desktop app.** No more console windows or `.bat` files - one app to start
 and stop counting, see both numbers, watch what the counter sees, choose what viewers see, fix the count and get help.
 
@@ -59,12 +65,40 @@ recognises the English "CHEST" pop-up drawn up to about 1.3x larger. These chest
 such streams it found 11 of 11 checked chests (v0.1.1: 3), with no chest counted twice and nothing counted that was not a
 chest. On normal-HUD footage every decision is the same as in v0.1.1 (verified event by event on the test recordings).
 
-### Video inputs
+### Video inputs and setup guides
 
 OBS Virtual Camera (recommended - single-PC, or the streaming PC of a dual-PC setup), capture devices, a screen, or a video
-file. Streaming the gameplay to the OBS PC over the network (for example with SRT) works through OBS by design: OBS receives
-the feed as a source and passes it to the counter through its Virtual Camera. That exact workflow has not been tested end to
-end on our hardware yet; the documentation will be updated once it has.
+file. Step-by-step guides:
+
+| Setup | Guide | Tested |
+|---|---|---|
+| Fortnite and OBS on one PC | [Single PC](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/obs-single-pc.md) | Yes |
+| Gaming PC + streaming PC on the same network, no capture card | [Dual PC over the network (SRT)](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/obs-dual-pc-srt.md) | **Yes** - 2026-11-07 |
+| Console or gaming PC + capture card + streaming PC | [Capture card](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/capture-card.md) | Counter side yes; not yet with a physical card |
+| A video file | [Recorded video](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/recorded-video.md) | Yes |
+
+Then: [show the numbers on stream](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/obs-overlay.md) ·
+[troubleshooting](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/troubleshooting.md).
+
+### Post-release validation: dual-PC over SRT (2026-11-07)
+
+After publication we tested the public v0.2.0 download in a real two-PC setup:
+
+| | Gaming PC (sender) | Streaming PC (receiver) |
+|---|---|---|
+| Hardware | Intel Core i9 13th gen, NVIDIA RTX 4080 | Intel Core i5 13th gen, NVIDIA RTX 4070 |
+| Role | OBS captures the Fortnite picture and sends it over the local network with SRT (Custom service, caller) | OBS receives it (Media Source, SRT listener, MPEG-TS) → OBS Virtual Camera → Fortnite Visual Chest Counter v0.2.0 |
+
+- **Video:** a Fortnite stream playing on the gaming PC, captured by its OBS. The video path is the same as for a match
+  played live.
+- **Result:** numerous chests detected and counted on the streaming PC, no noticeable lag or other significant problems.
+  The counter did not run on the gaming PC.
+- **Scope:** this validates SRT as a viable video path for the counter on the tested setup. It is not a guarantee for every
+  network or configuration. The [guide](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/obs-dual-pc-srt.md)
+  covers both PCs' OBS settings, suggested starting settings (NVENC H.264, 720p30, 4000 Kbps), Studio Mode, Windows Firewall
+  (UDP port 9000) and black-screen troubleshooting.
+- **No software change:** the v0.2.0 zip, its SHA-256 and the `v0.2.0` tag are unchanged; only the documentation was
+  updated.
 
 ### Known limitations
 
@@ -73,7 +107,9 @@ end on our hardware yet; the documentation will be updated once it has.
   APPROX only. A smaller, moved or hidden HUD, or a 4:3 / vertical picture, will not work well.
 - On a larger HUD, a second chest opened while the first pop-up is still showing counts as one.
 - Other chest types whose pop-up does not say "CHEST" / "BAÚ" (e.g. Sprite Chests) are not counted yet.
-- Tested on a limited set of recordings and live sessions; capture-card input is untested on physical cards.
+- One running total; per-match statistics are planned, not included yet.
+- Tested on a limited set of recordings, live sessions and one dual-PC SRT setup; capture-card input is untested on
+  physical cards.
 
 ### Fair play and compatibility
 
@@ -82,7 +118,8 @@ locate hidden chests, reveal enemies, aim, automate gameplay, read Fortnite's me
 game, and it makes no internet connection. It is an independent project - not affiliated with, endorsed by or approved by
 Epic Games. Epic's rules prohibit tools that use real-time gameplay information to gain a competitive advantage; this app is
 designed for counting, not for competitive assistance, but Epic does not certify individual third-party applications. The
-most conservative setups are counting recorded video and running the counter on a separate streaming PC. Running it on the
+most conservative setups are counting recorded video and running the counter on a separate streaming PC (for example with
+the tested SRT setup above). Running it on the
 same PC as Fortnite works, but its compatibility with Fortnite's anti-cheat has not been officially verified - and a dual-PC
 setup is not a compliance guarantee either. Details: README, "Fair play and compatibility".
 
