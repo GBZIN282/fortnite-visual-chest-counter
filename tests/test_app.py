@@ -467,9 +467,10 @@ def test_recording_can_be_switched_while_counting_continues():
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "config.toml").write_text(f'[capture]\nmode = "off"\ndir = "{Path(tmp).as_posix()}/captures"\n',
                                                   encoding="utf-8")
+            (Path(tmp) / "s.json").write_text(json.dumps({"certain": 5, "approximate": 12}), encoding="utf-8")
             sys.stdin = os.fdopen(read, "r")
-            script = [(0.6, b"capture marks\n"), (1.4, b"mark\n"), (2.0, b"capture session\n"), (3.0, b"capture off\n"),
-                      (3.6, b"mark\n"), (4.2, b"stop\n")]
+            script = [(0.6, b"capture marks\n"), (1.4, b"mark\n"), (2.0, b"capture events\n"), (2.8, b"capture session\n"),
+                      (3.6, b"capture off\n"), (4.2, b"mark\n"), (4.8, b"stop\n")]
             for at, line in script:
                 threading.Timer(at, lambda line=line: os.write(write, line)).start()
             buf = io.StringIO()
@@ -480,14 +481,20 @@ def test_recording_can_be_switched_while_counting_continues():
             folders = sorted(p.parent for p in Path(tmp, "captures").glob("*/capture.json"))
             infos = [json.loads((f / "capture.json").read_text(encoding="utf-8")) for f in folders]
             first_marks = (folders[0] / "marks.jsonl").read_text(encoding="utf-8").splitlines() if folders else []
+            final_state = json.loads((Path(tmp) / "s.json").read_text(encoding="utf-8"))
+            from fortnite_chest_counter import review
+            reviewed = review.run(folders[0], out=lambda text: None)          # the marks-only capture replays
     finally:
         sources.make_source, paths.ffmpeg_executable, sys.stdin = real_make, real_ff, stdin
         CONSOLE.machine, paths.HIDE_CHILD_CONSOLES = False, False
         os.close(write)
     states = [(m["state"], m.get("mode")) for m in msgs if m["type"] == "capture"]
-    assert code == 0 and ("recording", "marks") in states and ("recording", "session") in states and ("off", "off") in states
-    assert sum(1 for s in states if s[0] == "saved") == 2                    # both recordings finished cleanly
-    assert [i["mode"] for i in infos] == ["marks", "session"] and all(i["ended_at"] for i in infos)
+    assert code == 0 and [s for s in states if s[0] == "recording"] == [("recording", "marks"), ("recording", "events"),
+                                                                       ("recording", "session")] and ("off", "off") in states
+    assert sum(1 for s in states if s[0] == "saved") == 3                    # every recording finished cleanly
+    assert [i["mode"] for i in infos] == ["marks", "events", "session"] and all(i["ended_at"] for i in infos)
+    assert (final_state["certain"], final_state["approximate"]) == (5, 12)  # switching never touches the totals
+    assert reviewed == [folders[0]]
     assert len(first_marks) == 1                                         # the mark went into the marks-only recording
     marks = [m for m in msgs if m["type"] == "mark"]
     assert [m["recorded"] for m in marks] == [True, False]               # the last mark had no recording to go into
@@ -535,7 +542,10 @@ def test_mark_button_and_hotkey_need_a_running_recording():
             win.dashboard.rec_mode.setCurrentIndex(win.dashboard.rec_mode.findData("marks"))   # while counting
             assert fake.sent == ["capture marks"]
             assert settings.load_config(Path(tmp) / "config.toml")[0]["capture"]["mode"] == "marks"
+            win.handle({"type": "capture", "state": "recording", "mode": "session", "folder": "S"})   # worker's real mode
+            assert win.dashboard.rec_mode.currentData() == "session" and fake.sent == ["capture marks"]   # shown, not re-sent
             win.handle({"type": "capture", "state": "recording", "mode": "marks", "folder": "X"})
+            assert win.dashboard.rec_mode.currentData() == "marks"
             assert win.dashboard.mark.isEnabled() and win.mark_moment() is True and fake.sent[-1] == "mark"
             win.handle({"type": "mark", "stamp": "01:02.00", "recorded": True})
             assert "Marked 01:02.00" in win.dashboard.rec_status.text()

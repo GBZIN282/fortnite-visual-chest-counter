@@ -21,6 +21,7 @@ src/fortnite_chest_counter/
   preview.py        shared-memory picture for the app's optional live preview (no Qt)
   capture.py        optional diagnostic recording of the detector's input + decisions + marks ([capture], CAPTURE.md)
   review.py         `review` command: replay captures through the current detector, compare with live + labels
+  progress.py       time-left estimates from measured throughput (Analyse a recording, Review captures)
   templates/        runtime detector templates (.npy) - tracked in Git, REQUIRED at runtime
 packaging/          build_release.py (embeddable Python + verified numpy/scipy/PySide6 + bundled ffmpeg + launcher + zip),
                     launcher/ (launcher.c, manifest, app.ico), make_icon.py, README.html, notices, licenses/ (LGPL/GPL texts)
@@ -73,6 +74,11 @@ python -m venv build-venv && build-venv\Scripts\pip install numpy scipy PySide6-
 build-venv\Scripts\python packaging\build_release.py --python-embed python-3.13.17-embed-amd64.zip ^
     --ffmpeg-zip <ffmpeg-win64-lgpl.zip> --ffmpeg-source <ffmpeg-source-COMMIT.tar.gz> --mingw C:\MinGW\bin --out build_out\vX.Y.Z
 ```
+
+On the development PC the exact inputs of the current builds are kept in `build_out\inputs\` (git-ignored):
+`python-3.13.17-embed-amd64.zip` (same archive as v0.1.1, SHA-256 9e35319b...), `ffmpeg-v0.1.1-shipped-win64-lgpl.zip`
+(the v0.1.1 ffmpeg.exe, SHA-256 7a1cc6f3...) and `ffmpeg-source-db8537d8cc.tar.gz`; the `.venv` has numpy, scipy and
+PySide6-Essentials 6.12.0.
 
 Since v0.2.0 the user opens **one app**, `Fortnite Visual Chest Counter.exe`: a ~70 KB launcher compiled by the build from
 `packaging/launcher/launcher.c` (MinGW gcc + windres; icon, version info, asInvoker manifest; `--no-insert-timestamp`, so the
