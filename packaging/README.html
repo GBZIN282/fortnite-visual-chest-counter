@@ -216,9 +216,11 @@ log and shown in the Activity panel.</p>
 <p><b>Diagnostic recording</b> (Settings &rarr; <b>Diagnostic recording</b>, off by default) also keeps the video the counter analysed, so each
 mark becomes a repeatable test case:</p>
 <ul>
-  <li><b>Keep the video around every detection and every mark</b> &mdash; small: about 20 seconds per chest and 40 seconds per mark.</li>
-  <li><b>Keep the whole session</b> &mdash; large (about 4 GB per hour), for finding chests the counter never noticed.</li>
+  <li><b>Keep the video around every chest decision and every mark</b> &mdash; the smaller choice: about 20 seconds per chest and 40 seconds per mark.</li>
+  <li><b>Keep the whole session</b> &mdash; large (about 10 GB per hour), for finding chests the counter never noticed.</li>
 </ul>
+<p><b>Lossless</b> (a tick box under the choice) keeps exactly what the counter saw, so a replay reproduces every decision, at about twice
+the disk space.</p>
 <p>Each counting session gets a folder in <code>captures\</code> with the video, every decision the counter made and a <code>labels.csv</code> you can
 fill in (<code>chest</code>, <code>not_chest</code>, <code>missed_chest</code>&hellip;). <b>Review captures&hellip;</b> on the Settings page replays every
 capture through the current version of the counter and compares it with what was counted live and with your labels. Recording never slows

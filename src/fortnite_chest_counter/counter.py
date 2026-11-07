@@ -954,6 +954,7 @@ def _open_capture(cfg, kind, label, res, in_fps, fps):
         from fortnite_chest_counter.input import video_sources as sources
         capture = Capture(c["dir"], c["mode"], fps, sources.WIDTH, sources.HEIGHT, c["before_seconds"], c["after_seconds"],
                           c["mark_before_seconds"], c["mark_after_seconds"], ffmpeg=paths.ffmpeg_executable() or "ffmpeg",
+                          quality=c["quality"],
                           info={"version": __version__, "source": label, "source_type": kind, "input_resolution": res,
                                 "input_fps": in_fps, "detector": cfg["detector"]})
     except Exception as error:

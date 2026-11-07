@@ -36,7 +36,27 @@ deleted about 40 s after they were recorded.
 
 ## Format choice (measured)
 
-FORMAT_RESULTS
+Measured 2026-11-07: the detector's own frames (English clip, full 8.5 min; PS5 clip 55-200 s) were recorded with each
+candidate, replayed with a fresh estimator, and every decision compared with direct analysis of the same frames
+(match = same source, tier and counts within 0.6 s).
+
+| Format (`[capture] quality`) | English clip | PS5 clip | max pop-up score change | Size |
+|---|---|---|---|---|
+| FFV1 lossless RGB (`lossless`) | **6/6** identical | **6/6** identical | 0.000 | ~22 GB/hour |
+| MJPEG 4:4:4 q2 (`standard`) | 5/6 (one HIGH -> CERTAIN) | 5/6 + 1 extra (one MEDIUM approx lost) | 0.032 | ~10 GB/hour |
+| MJPEG 4:4:4 q4 | 4/6 | 5/6 + 1 extra | 0.108 | ~6.4 GB/hour |
+| MJPEG 4:2:0 q2 | 4/6 | 5/6 + 1 extra | 0.075 | ~7.2 GB/hour |
+| H.264 (OpenH264, 8 Mbps, 4:2:0) | not measured: the development FFmpeg has no OpenH264 | | | |
+
+The 7-px pop-up word is so small that every lossy format moves its match score a little, which flips decisions sitting
+within a few hundredths of a tier threshold; chroma subsampling (4:2:0) hurts more than JPEG quantisation. Hence:
+`standard` (default) for everyday use - the chest is clearly visible and replays agree on everything not at a
+threshold - and `lossless` when the replay must reproduce the live decision exactly. Whatever the format, replaying the
+SAME capture is deterministic, so comparing detector versions on a capture is always exact. Intra-only codecs also cut
+into 10-s segments at any frame. Encoder load: about 0.1 core (MJPEG) / 0.3 core (FFV1) at 15 fps 720p.
+
+Events mode does not keep video around generic button prompts (pickups, ammo boxes ...: frequent, not chest decisions);
+they are still listed in events.jsonl.
 
 ## Labels and review
 

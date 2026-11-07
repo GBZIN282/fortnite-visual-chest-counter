@@ -333,6 +333,29 @@ def test_capture_session_mode_keeps_everything_and_off_starts_nothing():
         assert cfg["capture"]["mode"] == "off" and C._open_capture(cfg, "file", "x", None, None, 15) is None
 
 
+def test_lossless_capture_replays_the_exact_frames_and_generic_prompts_keep_no_video():
+    from fortnite_chest_counter.capture import Capture
+    from fortnite_chest_counter import review
+    rng = np.random.default_rng(7)
+    frames_in = [rng.integers(0, 255, (720, 1280, 3), dtype=np.uint8) for _ in range(3)]
+    with tempfile.TemporaryDirectory() as tmp:
+        cap = Capture(tmp, "events", 15, 1280, 720, quality="lossless")
+        for i in range(45):                                             # 3 s of noise frames
+            while cap._queue.full():
+                time.sleep(0.002)
+            cap.offer(i / 15, frames_in[i % 3])
+        cap.add_events([{"event_id": "E0001", "time": 1.0, "source": "interaction_object", "adjusted_tier": "-",
+                         "certain_counted": False, "approx_counted": False}])     # generic prompt: no video kept
+        assert cap.keep == []
+        cap.add_mark(2.0)
+        summary = cap.close()
+        info = json.loads((Path(summary["folder"]) / "capture.json").read_text(encoding="utf-8"))
+        clips = json.loads((Path(summary["folder"]) / "video" / "clips.json").read_text(encoding="utf-8"))
+        assert info["codec"] == "FFV1 lossless RGB" and len(clips) == 1
+        out = [f for _, f in review.frames(Path(summary["folder"]) / clips[0]["file"], 15)]
+        assert len(out) == 45 and all(np.array_equal(out[i], frames_in[i % 3]) for i in range(45))   # bit-exact
+
+
 def test_capture_never_blocks_counting_even_if_the_encoder_dies():
     from fortnite_chest_counter.capture import Capture
     with tempfile.TemporaryDirectory() as tmp:

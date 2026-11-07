@@ -40,10 +40,13 @@ MODES = ("off", "events", "session")
 SEGMENT_SECONDS = 10
 QUEUE_FRAMES = 30                          # ~2 s of 720p frames (~80 MB) between the counter and the encoder
 MIN_FREE_BYTES = 2 * 1024 ** 3             # do not start below 2 GB free; stop recording below 1 GB
-# Intra-only, full-colour (4:4:4) MJPEG at high quality: every frame cuts cleanly into segments, and the tiny coloured HUD
-# text survives (chosen by measurement: see docs/CAPTURE.md).
-CODEC_ARGS = ["-c:v", "mjpeg", "-q:v", "2", "-pix_fmt", "yuvj444p"]
-CODEC_NAME = "MJPEG 4:4:4 q2"
+# Measured (docs/CAPTURE.md): the 7-px pop-up text is so small that any lossy format moves its match score a little.
+#   standard  intra-only full-colour MJPEG, best quality: ~10 GB/hour; replay = live for most decisions, borderline ones
+#             (within ~0.03 of a tier threshold) can differ
+#   lossless  FFV1, exact RGB: ~22 GB/hour; the replay sees exactly what the detector saw
+QUALITIES = {"standard": (["-c:v", "mjpeg", "-q:v", "2", "-pix_fmt", "yuvj444p"], "MJPEG 4:4:4 q2"),
+             "lossless": (["-c:v", "ffv1", "-level", "3", "-slices", "4", "-pix_fmt", "bgr0"], "FFV1 lossless RGB")}
+CODEC_ARGS, CODEC_NAME = QUALITIES["standard"]
 LABEL_FIELDS = ["kind", "id", "live_time", "clip", "clip_time", "decision", "tier", "evidence", "truth", "note"]
 TRUTH_HELP = ("truth: chest | not_chest | missed_chest | sprite_chest | reward | other  (leave empty if unsure)")
 
@@ -55,9 +58,11 @@ def mmss(seconds):
 
 class Capture:
     def __init__(self, base_dir, mode, fps, width, height, before=10, after=10, mark_before=30, mark_after=10,
-                 info=None, ffmpeg="ffmpeg", codec_args=None, codec_name=None):
+                 info=None, ffmpeg="ffmpeg", codec_args=None, codec_name=None, quality="standard"):
         if mode not in ("events", "session"):
             raise ValueError(f"capture mode must be 'events' or 'session', not {mode!r}")
+        if codec_args is None:
+            codec_args, codec_name = QUALITIES[quality]
         self.mode, self.fps, self.width, self.height = mode, fps, width, height
         self.before, self.after, self.mark_before, self.mark_after = before, after, mark_before, mark_after
         self.folder = Path(base_dir).resolve() / datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -122,7 +127,9 @@ class Capture:
                                           "reason")}
             row["recording_time"] = round(rec, 3)
             self.events.append(row)
-            self.keep.append((rec - self.before, rec + self.after))
+            # Generic button prompts (pickups, ammo boxes ...) are frequent and not chest decisions: logged, video not kept.
+            if not (ev.get("source") == "interaction_object" and not ev.get("approx_counted")):
+                self.keep.append((rec - self.before, rec + self.after))
             self._append("events.jsonl", row)
 
     def add_mark(self, live_t, label="mark"):
@@ -263,19 +270,20 @@ class Capture:
     def _write_labels(self):
         rows = []
         for ev in self.events:
-            decision = "certain" if ev["certain_counted"] else "approx" if ev["approx_counted"] else "not counted"
+            decision = "certain" if ev.get("certain_counted") else "approx" if ev.get("approx_counted") else "not counted"
             evidence = (f"popup {ev['popup_score']:.2f} {ev['popup_template']}" if ev.get("popup_score") is not None
                         else f"prompt {ev.get('interaction_score') or 0:.2f}")
-            rows.append({"kind": "event", "id": ev["event_id"], "live_time": ev["stamp"], "clip": ev["clip"] or "",
+            rows.append({"_t": ev["time"], "kind": "event", "id": ev.get("event_id") or "",
+                         "live_time": mmss(ev["time"]), "clip": ev["clip"] or "",
                          "clip_time": "" if ev["clip_time"] is None else mmss(ev["clip_time"]), "decision": decision,
-                         "tier": ev["adjusted_tier"], "evidence": evidence, "truth": "", "note": ""})
+                         "tier": ev.get("adjusted_tier") or "", "evidence": evidence, "truth": "", "note": ""})
         for m in self.marks:
-            rows.append({"kind": "mark", "id": m["mark_id"], "live_time": m["stamp"], "clip": m["clip"] or "",
+            rows.append({"_t": m["time"], "kind": "mark", "id": m["mark_id"], "live_time": m["stamp"], "clip": m["clip"] or "",
                          "clip_time": "" if m["clip_time"] is None else mmss(m["clip_time"]), "decision": m["label"],
                          "tier": "", "evidence": "", "truth": "", "note": ""})
-        rows.sort(key=lambda r: r["live_time"])
+        rows.sort(key=lambda r: r["_t"])                     # by time, not by text ("100:00" < "99:00" as text)
         with open(self.folder / "labels.csv", "w", encoding="utf-8-sig", newline="") as f:
-            writer = csv.DictWriter(f, LABEL_FIELDS)
+            writer = csv.DictWriter(f, LABEL_FIELDS, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(rows)
         (self.folder / "README.txt").write_text(

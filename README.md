@@ -214,9 +214,10 @@ Both work while counting (the counter picks up the change within a second).
 ## Help improve accuracy: marks and diagnostic recording
 
 - **Mark a miss:** press **Ctrl+Alt+M** while you play (works while Fortnite has the focus) or click **Mark moment**.
-- **Diagnostic recording** (Settings, off by default) keeps exactly what the counter analysed: the video around every
-  detection and every mark (small), or the whole session (large). Each session gets a folder in `captures\` with the video,
-  every decision and a `labels.csv` to note what really happened.
+- **Diagnostic recording** (Settings, off by default) keeps what the counter analysed: the video around every chest
+  decision and every mark (smaller), or the whole session (about 10 GB per hour; **Lossless** = exact replay, about twice
+  that). Each session gets a folder in `captures\` with the video, every decision and a `labels.csv` to note what really
+  happened.
 - **Review captures...** (Settings) replays every capture through the current version of the counter and compares it with the
   live decisions and your labels - so misses become repeatable tests. Details: [docs/CAPTURE.md](docs/CAPTURE.md).
 

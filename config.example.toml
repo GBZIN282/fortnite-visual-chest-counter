@@ -96,9 +96,11 @@ dir = "logs"
 # Diagnostic recording (advanced, OFF by default): records exactly what the counter analyses, so a missed or wrong chest
 # can be replayed and checked later. Easiest: the app's Settings page. Mark a moment with Ctrl+Alt+M (app) or M (console).
 #   "off"     = nothing is recorded (the default)
-#   "events"  = keep the video around every detection and every mark (small)
-#   "session" = keep the whole session (large: several GB per hour)
+#   "events"  = keep the video around every chest decision and every mark (the smaller choice)
+#   "session" = keep the whole session (large: about 10 GB per hour)
 mode = "off"
+# "standard" (about 10 GB per hour of kept video) or "lossless" (exact replay of what the counter saw, about 22 GB per hour)
+quality = "standard"
 before_seconds = 10
 after_seconds = 10
 mark_before_seconds = 30

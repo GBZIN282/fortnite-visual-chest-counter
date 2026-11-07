@@ -59,6 +59,7 @@ DEFAULTS = {
         "after_seconds": 10,
         "mark_before_seconds": 30,              # video kept before / after a mark ("the counter missed a chest")
         "mark_after_seconds": 10,
+        "quality": "standard",                  # standard (~10 GB/hour of video) | lossless (exact replay, ~22 GB/hour)
         "dir": "captures",
     },
     "live": {
@@ -75,6 +76,7 @@ SHOW_MODES = ("both", "certain", "approx")
 BOTH_LAYOUTS = ("stacked", "inline")
 VERBOSITY_LEVELS = ("minimal", "normal", "debug")
 CAPTURE_MODES = ("off", "events", "session")
+CAPTURE_QUALITIES = ("standard", "lossless")
 # The app's language choice -> [detector] languages. "Both" is not automatic detection: it checks both words all the time.
 # (Real "Auto" - identify the language per match - needs match recognition first; see docs/ROADMAP.md.)
 LANGUAGE_CHOICES = (("English", ["en"]), ("Portuguese (Brazil)", ["pt"]), ("Both (English + Portuguese (Brazil))", ["en", "pt"]))
@@ -122,6 +124,8 @@ def _check(section, key, value):
                 "must be a whole number of seconds from 0 to 120")
     if section == "capture" and key == "mode":
         return (value in CAPTURE_MODES, f"must be one of {list(CAPTURE_MODES)}")
+    if section == "capture" and key == "quality":
+        return (value in CAPTURE_QUALITIES, f"must be one of {list(CAPTURE_QUALITIES)}")
     if key in ("monitor", "status_interval_seconds"):
         return (isinstance(value, int) and not isinstance(value, bool) and value >= 1, "must be a whole number >= 1")
     if isinstance(default, list):

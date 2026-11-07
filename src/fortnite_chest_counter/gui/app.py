@@ -857,9 +857,12 @@ class SettingsPage(QWidget):
                                "play (or Mark moment on the Dashboard) when the counter misses a chest.")
         self.capture = QComboBox()
         self.capture.addItem("Off", "off")
-        self.capture.addItem("Keep the video around every detection and every mark (small)", "events")
-        self.capture.addItem("Keep the whole session (large: about 4 GB per hour)", "session")
+        self.capture.addItem("Keep the video around every chest decision and every mark (smaller)", "events")
+        self.capture.addItem("Keep the whole session (large: about 10 GB per hour)", "session")
         box_layout.addWidget(self.capture)
+        self.lossless = QCheckBox("Lossless: the replay sees exactly what the counter saw (about twice the disk space)")
+        box_layout.addWidget(self.lossless)
+        self.capture.currentIndexChanged.connect(lambda _: self.lossless.setEnabled(self.capture.currentData() != "off"))
         row = QHBoxLayout()
         row.addWidget(button("Open captures folder", on_click=self._open_captures))
         row.addWidget(button("Review captures...", tip="Replay every capture through the current detector and compare it "
@@ -892,6 +895,8 @@ class SettingsPage(QWidget):
         self.snapshots.setChecked(cfg["logging"]["save_snapshots"])
         self.snapshots.setEnabled(cfg["logging"]["enabled"])
         self.capture.setCurrentIndex(max(self.capture.findData(cfg["capture"]["mode"]), 0))
+        self.lossless.setChecked(cfg["capture"]["quality"] == "lossless")
+        self.lossless.setEnabled(cfg["capture"]["mode"] != "off")
         self.saved.setText("")
 
     def save(self):
@@ -900,7 +905,8 @@ class SettingsPage(QWidget):
             C.update_config_file(config_file(), "detector", {"languages": langs})
             C.update_config_file(config_file(), "logging", {"enabled": self.logging.isChecked(),
                                                             "save_snapshots": self.snapshots.isChecked()})
-            C.update_config_file(config_file(), "capture", {"mode": self.capture.currentData()})
+            C.update_config_file(config_file(), "capture", {"mode": self.capture.currentData(),
+                                                            "quality": "lossless" if self.lossless.isChecked() else "standard"})
         except (C.UserError, OSError) as error:
             show_error(self, str(error))
             return
