@@ -104,7 +104,10 @@ def compare(folder, replayed):
     rows.sort()
     labels = []
     for lab in read_labels(folder):
-        t = _seconds(lab["live_time"])
+        try:
+            t = _seconds(lab["live_time"])
+        except (TypeError, ValueError):
+            continue                               # a hand-edited row without a usable time (mm:ss.ss)
         truth = lab["truth"].strip().lower()
         hit = _near([e for e in replayed if e.get("approx_counted")], t, "live_time")
         live_hit = _near([e for e in live if e.get("approx_counted")], t, "time")

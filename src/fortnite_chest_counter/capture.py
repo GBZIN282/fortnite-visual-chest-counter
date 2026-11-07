@@ -60,7 +60,7 @@ class Capture:
             raise ValueError(f"capture mode must be 'events' or 'session', not {mode!r}")
         self.mode, self.fps, self.width, self.height = mode, fps, width, height
         self.before, self.after, self.mark_before, self.mark_after = before, after, mark_before, mark_after
-        self.folder = Path(base_dir) / datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.folder = Path(base_dir).resolve() / datetime.now().strftime("%Y%m%d_%H%M%S")
         self.video_dir = self.folder / "video"
         self.video_dir.mkdir(parents=True, exist_ok=False)
         free = shutil.disk_usage(self.folder).free
@@ -153,8 +153,12 @@ class Capture:
                 self.frame_times.append(t)
             if time.monotonic() >= next_cleanup:
                 next_cleanup = time.monotonic() + SEGMENT_SECONDS
-                self._cleanup()
-                if shutil.disk_usage(self.folder).free < MIN_FREE_BYTES // 2:
+                try:
+                    self._cleanup()
+                    low = shutil.disk_usage(self.folder).free < MIN_FREE_BYTES // 2
+                except Exception:                  # housekeeping must never stop the recording
+                    low = False
+                if low:
                     self.stopped_reason = "less than 1 GB free on the drive"
                     break
 
@@ -162,9 +166,15 @@ class Capture:
         """Finished segments: [(file name, start s, end s)] from FFmpeg's list."""
         try:
             rows = list(csv.reader((self.video_dir / "segments.csv").read_text(encoding="utf-8").splitlines()))
-        except OSError:
+        except (OSError, ValueError):
             return []
-        return [(r[0], float(r[1]), float(r[2])) for r in rows if len(r) >= 3]
+        segments = []
+        for r in rows:                             # FFmpeg may be writing the last line right now: skip a partial one
+            try:
+                segments.append((r[0], float(r[1]), float(r[2])))
+            except (IndexError, ValueError):
+                pass
+        return segments
 
     def _wanted(self, start, end):
         return self.mode == "session" or any(a < end and b > start for a, b in self.keep)

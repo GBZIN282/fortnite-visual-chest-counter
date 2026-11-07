@@ -39,7 +39,7 @@ command that replays captures through the current detector. This is the data fou
 Before release:
 1. The user's hands-on test of the app with OBS (single PC), then the two-PC / Wi-Fi tests - with diagnostic recording on.
 2. Smart App Control: read PC B's CodeIntegrity log (which file is refused); decide on signing (see WINDOWS_TRUST.md).
-3. Rewrite the top-level `README.md` for the app (it still describes the v0.1.1 `.bat` workflow); final build + scan.
+3. Final build + scan (the top-level `README.md` is rewritten for the app on this branch; review it before merging).
 4. Optional, separate change: replace `scipy.signal.fftconvolve` with NumPy (-107 unsigned files, -30 MB) only if the
    regression harness shows identical events.
 

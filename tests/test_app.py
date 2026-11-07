@@ -347,6 +347,33 @@ def test_capture_never_blocks_counting_even_if_the_encoder_dies():
         assert time.monotonic() - t0 < 15 and summary["stopped_early"]
 
 
+def test_review_scores_live_and_replay_against_the_labels():
+    from fortnite_chest_counter import review
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        live = [{"event_id": "E0001", "time": 10.0, "adjusted_tier": "HIGH", "certain_counted": True, "approx_counted": True},
+                {"event_id": "E0002", "time": 30.0, "adjusted_tier": "LOW", "certain_counted": False, "approx_counted": False},
+                {"event_id": "E0003", "time": 70.0, "adjusted_tier": "MEDIUM", "certain_counted": False, "approx_counted": True}]
+        (folder / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in live), encoding="utf-8")
+        (folder / "labels.csv").write_text(
+            "kind,id,live_time,clip,clip_time,decision,tier,evidence,truth,note\n"
+            "event,E0001,00:10.00,,,certain,HIGH,,chest,\n"
+            "event,E0002,00:30.00,,,not counted,LOW,,chest,blurry\n"
+            "missed,,00:50.00,,,,,,missed_chest,nobody saw it\n"
+            "event,E0003,01:10.00,,,approx,MEDIUM,,not_chest,a supply drop\n"
+            "missed,,soon,,,,,,chest,bad time is skipped\n", encoding="utf-8-sig")
+        replayed = [{"live_time": 10.1, "adjusted_tier": "HIGH", "certain_counted": True, "approx_counted": True},
+                    {"live_time": 30.0, "adjusted_tier": "MEDIUM", "certain_counted": False, "approx_counted": True}]
+        result = review.compare(folder, replayed)
+        assert result["same"] == 1 and len(result["labels"]) == 4
+        assert review.score(result["labels"], "live") == {"real": 3, "found_certain": 1, "found_approx": 1,
+                                                         "wrongly_counted": 1, "labelled_not_chest": 1}
+        assert review.score(result["labels"], "replay") == {"real": 3, "found_certain": 1, "found_approx": 2,
+                                                           "wrongly_counted": 0, "labelled_not_chest": 1}
+        text = review.report(folder, result, settings.DEFAULTS["detector"])
+        assert "<- different" in text and "real chests 3" in text
+
+
 def test_marks_arrive_through_the_app_control_channel():
     control = C.AppControl(io.StringIO("mark\nmark missed chest\nstop\n"))
     assert control.requested.wait(2)
