@@ -9,6 +9,7 @@ The address comes from GITHUB below. Nothing in config.toml, the environment or 
 build another ReleaseSource, in code.
 """
 
+import contextlib
 import http.client
 import json
 import re
@@ -125,30 +126,20 @@ def _http_failure(error):
     headers = error.headers
     limited = error.code == 429 or (error.code == 403 and (headers.get("X-RateLimit-Remaining") == "0"
                                                            or headers.get("Retry-After") is not None))
+    code = error.code
     error.close()
     if limited:
         return UpdateError("rate_limited", "GitHub is limiting update checks from this network. Please try again later.")
-    return UpdateError("api_error", f"GitHub answered with an error (HTTP {error.code}). Please try again later.")
+    if code == 416:
+        return UpdateError("bad_range", "The server could not continue the download from where it stopped.")
+    return UpdateError("api_error", f"GitHub answered with an error (HTTP {code}). Please try again later.")
 
 
-def http_get(url, source, accept, max_bytes):
-    """The body of one GET. Everything the network or the server can do wrong becomes an UpdateError."""
-    if not url_allowed(url, source):
-        raise UpdateError("bad_response", "The update information contained an unsafe address.")
-    request = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": USER_AGENT})
-    opener = urllib.request.build_opener(_SafeRedirects(source),
-                                         urllib.request.HTTPSHandler(context=ssl.create_default_context()))
-    deadline = time.monotonic() + source.total_timeout
-    body = bytearray()
+@contextlib.contextmanager
+def network_errors():
+    """Everything the network or the server can do wrong becomes an UpdateError."""
     try:
-        with opener.open(request, timeout=source.timeout) as response:
-            expected = response.headers.get("Content-Length")
-            while chunk := response.read1(64 * 1024):      # read1: returns as data arrives, so the deadline is checked
-                body += chunk
-                if len(body) > max_bytes:
-                    raise UpdateError("bad_response", "The update server sent far more data than expected.")
-                if time.monotonic() > deadline:
-                    raise TimeoutError
+        yield
     except UpdateError:
         raise
     except urllib.error.HTTPError as error:
@@ -160,6 +151,32 @@ def http_get(url, source, accept, max_bytes):
         raise UpdateError(kind, "Could not reach GitHub. Check the internet connection and try again.") from None
     except (OSError, http.client.HTTPException, ValueError):
         raise UpdateError("network", "The connection to GitHub failed. Please try again.") from None
+
+
+def open_response(url, source, accept, extra_headers=None):
+    """An open response (use it in a `with`). Redirects are followed, and may never leave HTTPS."""
+    if not url_allowed(url, source):
+        raise UpdateError("bad_response", "The update information contained an unsafe address.")
+    request = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": USER_AGENT, **(extra_headers or {})})
+    opener = urllib.request.build_opener(_SafeRedirects(source),
+                                         urllib.request.HTTPSHandler(context=ssl.create_default_context()))
+    with network_errors():
+        return opener.open(request, timeout=source.timeout)
+
+
+def http_get(url, source, accept, max_bytes):
+    """The body of one small GET, within the source's total deadline."""
+    deadline = time.monotonic() + source.total_timeout
+    response = open_response(url, source, accept)
+    body = bytearray()
+    with response, network_errors():
+        expected = response.headers.get("Content-Length")
+        while chunk := response.read1(64 * 1024):          # read1: returns as data arrives, so the deadline is checked
+            body += chunk
+            if len(body) > max_bytes:
+                raise UpdateError("bad_response", "The update server sent far more data than expected.")
+            if time.monotonic() > deadline:
+                raise TimeoutError
     if expected is not None and expected.isdigit() and int(expected) != len(body):
         raise UpdateError("network", "The connection to GitHub was cut off. Please try again.")
     return bytes(body)

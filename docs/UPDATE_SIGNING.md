@@ -73,14 +73,14 @@ installed one.
 ## Creating the keys
 
 Create **two** keys and ship both public keys from the first signed release: a primary for signing releases and an offline
-backup that is used only if the primary is lost or stolen. With only one key, losing it forces every user into another manual
+recovery key that is used only if the primary is lost or stolen. With only one key, losing it forces every user into another manual
 install.
 
 Run this on a PC you trust, for each key, with a path outside the repository:
 
 ```powershell
 python packaging/sign_release.py keygen --out "D:\release-keys\fcc-update-primary.pem"
-python packaging/sign_release.py keygen --out "E:\offline\fcc-update-backup.pem"
+python packaging/sign_release.py keygen --out "E:\offline\fcc-update-recovery.pem"
 ```
 
 The tool asks for a passphrase of at least 16 characters, encrypts the file, never overwrites an existing key and refuses a path
@@ -90,7 +90,7 @@ inside this repository. It prints each public key: add both to `TRUSTED_PUBLIC_K
 
 - Keep private keys out of this repository, build folders, GitHub secrets, CI and cloud-synced folders.
 - Use a different passphrase for each key, kept in a password manager.
-- Keep at least one encrypted copy of each key on separate offline media. Keep the backup key **only** offline.
+- Keep at least one encrypted copy of each key on separate offline media. Keep the recovery key **only** offline.
 
 ## Signing a release
 
@@ -98,8 +98,8 @@ inside this repository. It prints each public key: add both to `TRUSTED_PUBLIC_K
 2. Sign it: `python packaging/sign_release.py sign --version X.Y.Z --zip <the zip> --key <primary key file>`
 3. Upload the zip and both signing files to a **draft** release, then publish it, so a half-uploaded release is never visible.
 
-The release process must refuse to publish without both signing files, and a release build must fail if `TRUSTED_PUBLIC_KEYS` is
-empty. Both checks are still to be added, together with the production keys.
+The release process must refuse to publish without both signing files, and a release build must fail unless `TRUSTED_PUBLIC_KEYS`
+holds both production keys. Both checks are still to be added, together with the production keys.
 
 ## Changing keys
 
@@ -107,11 +107,11 @@ empty. Both checks are still to be added, together with the production keys.
 signing with both (repeat `--key`) for as long as older copies may still need updating. Remove the old key from the list only
 in a release that is still signed by it as well.
 
-**Primary lost, backup safe.** Sign the next release with the backup key; every copy already trusts it. In that release, add a
+**Primary lost, recovery key safe.** Sign the next release with the recovery key; every copy already trusts it. In that release, add a
 new key to the trust list and remove the lost one.
 
 **Primary stolen.** Treat the GitHub account as at risk too: change its password and tokens. Publish a release signed by the
-backup key that removes the stolen key and adds a new one. Installed copies cannot be reached remotely, so each keeps trusting
+recovery key that removes the stolen key and adds a new one. Installed copies cannot be reached remotely, so each keeps trusting
 the stolen key until it installs that release. A thief would also need a way to publish to this repository.
 
 **Every key lost.** No installed copy can verify a new release. Create new keys and tell users to install the next version by
