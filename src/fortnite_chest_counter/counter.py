@@ -364,7 +364,8 @@ def config_overrides(args):
     return {("detector", "process_fps"): getattr(args, "process_fps", None),
                  ("state", "path"): getattr(args, "state", None), ("state", "obs_dir"): getattr(args, "obs_dir", None),
                  ("logging", "dir"): getattr(args, "log_dir", None), ("live", "source"): getattr(args, "source", None),
-                 ("live", "device"): getattr(args, "device", None), ("live", "monitor"): getattr(args, "monitor", None)}
+                 ("live", "device"): getattr(args, "device", None), ("live", "monitor"): getattr(args, "monitor", None),
+                 ("live", "window"): getattr(args, "window", None)}
 
 
 def config_path(args):
@@ -903,17 +904,30 @@ def explain_source_failure(kind, label, error_text):
                 "use the normal OBS Virtual Camera mode instead (recommended).")
     if kind == "desktop":
         return "Could not capture the screen. Try the recommended OBS Virtual Camera mode instead."
+    if kind == "window":
+        if "is minimized" in error_text:
+            return ("The OBS projector window is minimized, so there is no picture to count.\n\n"
+                    "  - Restore it (click it in the taskbar). It may stay behind other windows, but not minimized.\n"
+                    "  - Then press Start counting again.")
+        if "is not open" in error_text:
+            return ("The OBS projector window you picked is not open.\n\n" + sources.WINDOW_STEPS +
+                    "\n\nA projector closes with OBS. Tip: OBS > Settings > General > Projectors > \"Save projectors on exit\" "
+                    "reopens it every time.")
+        return (f"Could not capture the OBS projector window ({label}).\n\n" + sources.WINDOW_STEPS +
+                f"\n\nDetails: {error_text}")
     return f"Could not open the video source ({label}). Details: {error_text}"
 
 
-def friendly_rate_note(res):
+def friendly_rate_note(res, kind=None):
     if not res:
         return
     if abs(res[0] / res[1] - 16 / 9) > 0.05:
         CONSOLE.warn(f"the video is {res[0]}x{res[1]}, which is not 16:9. The picture will be stretched and the chest "
               f"detection may not work. Make the ChestDetectorFeed scene 16:9 (for example 1920x1080).")
     elif res[0] < 1280:
-        CONSOLE.warn(f"the video is only {res[0]}x{res[1]}. Detection works best at 1280x720 or higher.")
+        hint = (" Make the OBS projector window bigger (at least 1280x720; any shape - black bars are cut off)."
+                if kind == "window" else "")
+        CONSOLE.warn(f"the video is only {res[0]}x{res[1]}. Detection works best at 1280x720 or higher.{hint}")
 
 
 def cmd_live(args):
@@ -1030,7 +1044,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     session = CounterSession(cfg, reset=args.reset)
     state = session.state
     try:
-        source = sources.make_source(kind, fps, device=live["device"], monitor=live["monitor"],
+        source = sources.make_source(kind, fps, device=live["device"], monitor=live["monitor"], window=live["window"],
                                      video=args.video, start=args.start or 0.0, duration=args.duration)
     except ValueError as error:
         raise UserError(str(error))
@@ -1046,7 +1060,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     res, in_fps = info["input_resolution"], info["input_fps"]
     CONSOLE.info((f"Connected: video {res[0]}x{res[1]} @ {in_fps} fps" if res else "Connected.")
                  + f" -> analysed at {fps} frames per second")
-    friendly_rate_note(res)
+    friendly_rate_note(res, kind)
     if control is not None:
         CONSOLE.emit("connected", source=source.label, kind=kind, resolution=res, input_fps=in_fps, process_fps=fps,
                      settings=origin, continuing=session.loaded_existing, persist=session.persist,
@@ -1128,6 +1142,8 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                 _mark(session, capture, t, label)
             if now_m - last_sync >= 1.0:
                 last_sync = now_m
+                for level, note in getattr(source, "take_notices", list)():     # e.g. the projector window was minimized
+                    (CONSOLE.warn if level == "warn" else CONSOLE.info)(note)
                 if session.sync_external_changes():
                     CONSOLE.info(f"Counter changed by Reset / Set Starting Count -> CERTAIN {session.fmt(state['certain'])} | "
                                  f"APPROX {session.fmt(state['approximate'])}")
@@ -1159,10 +1175,15 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                 guard.requested.wait(0.5)
             if control is not None and control.requested.is_set():
                 stop_reason = control.reason                # the app's Stop ended the frame source
-            if stop_reason == "stream ended" and kind in ("obs-camera", "device", "desktop") \
+            if stop_reason == "stream ended" and kind in ("obs-camera", "device", "desktop", "window") \
                     and not (guard is not None and guard.requested.is_set()):
                 stop_reason = "video source stopped"
-                CONSOLE.warn("the video stopped coming in (was OBS or the Virtual Camera closed?).")
+                if kind == "window":
+                    CONSOLE.warn(f"{getattr(source, 'ended_reason', None) or 'the projector window stopped sending pictures'}"
+                                 ", so counting stopped. Open it again in OBS (right-click the source > Windowed Projector "
+                                 "(Source)) and start counting again.")
+                else:
+                    CONSOLE.warn("the video stopped coming in (was OBS or the Virtual Camera closed?).")
     except KeyboardInterrupt:
         stop_reason = "Ctrl+C"
     except OSError:
@@ -1576,7 +1597,8 @@ def cmd_diagnostics(args):
     det = cfg["detector"]
     out(f"Detector:         {det['process_fps']} fps | languages {det['languages']} | certain_min_tier {det['certain_min_tier']} | "
         f"medium_counts_alone {det['medium_counts_alone_languages']}")
-    out(f"Live source:      {cfg['live']['source']}")
+    out(f"Live source:      {cfg['live']['source']}" + (f"  (window {cfg['live']['window']!r})"
+                                                          if cfg['live']['source'] == "window" else ""))
     ff = paths.ffmpeg_executable()
     if ff:
         try:
@@ -1630,6 +1652,13 @@ def cmd_diagnostics(args):
             out("Monitors:         " + ", ".join(f"{w}x{h}" for _, _, w, h in sources.list_monitors()))
         except Exception:
             pass
+    try:
+        windows = sources.list_obs_windows()
+        out("OBS windows:      " + (", ".join(repr(t) + (" (minimized)" if m else "") for t, m in windows)
+                                    if windows else "(no projector or other OBS window open)"))
+    except Exception as error:
+        out(f"OBS windows:      could not list ({error})")
+    _diagnose_obs_websocket(cfg["obs_websocket"], out)
     out("\n(Copy everything above into your support message. It contains no account or personal data;"
         " device names are listed as Windows reports them.)")
     try:
@@ -1638,6 +1667,35 @@ def cmd_diagnostics(args):
         print(f"A copy was saved to {target}")
     except OSError:
         pass
+
+
+def _diagnose_obs_websocket(ws, out):
+    """Support report: the optional OBS WebSocket output - settings, and a short live check. Never the password."""
+    if not ws["enabled"]:
+        out("OBS WebSocket:    off (OBS reads the text file)")
+        return
+    from fortnite_chest_counter.obs import client as obs
+    from fortnite_chest_counter.obs import credentials
+    out(f"OBS WebSocket:    on -> {ws['host']}:{ws['port']}, Text source {ws['source']!r}, "
+        f"password saved: {'yes' if credentials.has_password() else 'no'}")
+    try:
+        client = obs.ObsClient(ws["host"], ws["port"], credentials.load_password(), timeout=3.0).connect()
+    except obs.ObsError as error:
+        out(f"                  NOT connected: {error}")
+        return
+    try:
+        found = obs.list_text_sources(client)
+        target = obs.find_source(found, ws["source"], ws["source_uuid"])
+        if target is None:
+            detail = f"Text source NOT found ({len(found)} Text source(s) in OBS)"
+        else:
+            on, _ = obs.reads_file(client, target)
+            detail = "Text source found" + (", but it has 'Read from file' ticked" if on else ", updated directly")
+        out(f"                  connected to {client.version_text}; {detail}")
+    except obs.ObsError as error:
+        out(f"                  connected, but: {error}")
+    finally:
+        client.close()
 
 
 def cmd_review(args):
@@ -1714,8 +1772,9 @@ def build_parser():
     p.set_defaults(func=cmd_simulate)
 
     p = sub.add_parser("live", parents=[common], help="count chests from a live video source (the default)")
-    p.add_argument("--source", choices=["obs-camera", "device", "desktop", "file"], help="override [live] source")
+    p.add_argument("--source", choices=["obs-camera", "device", "desktop", "window", "file"], help="override [live] source")
     p.add_argument("--device", help="DirectShow device name for --source device")
+    p.add_argument("--window", help="exact window title for --source window (an OBS Windowed Projector)")
     p.add_argument("--monitor", type=int, help="monitor number for --source desktop")
     p.add_argument("--video", help="video file for --source file (played in real time; for testing)")
     p.add_argument("--start", type=float, help="start offset in seconds for --source file")

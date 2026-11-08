@@ -58,11 +58,29 @@ recognition but turning detections into gameplay statistics:
 | Version | Milestone |
 |---|---|
 | v0.2.0 | Automatic chest counting and a usable desktop app (released) |
+| v0.2.1 | OBS compatibility: WebSocket overlay output, OBS projector input, analysis-rate presets (in development) |
 | **v0.3.0** | **Match Tracking & Statistics Foundation** - the backend that makes statistics possible |
 | **v0.4.0** | **Statistics & Performance Analytics** - records, history and trends on top of v0.3.0 |
 
 These are **planning milestones, not implementation authorization**: each one starts with an investigation and a design
 the user approves before any code changes.
+
+### v0.2.1 - OBS compatibility (in development, branch `dev/v0.2.1`)
+
+Driven by a real streamer setup: capture card owned by OBS, OBS Virtual Camera used by another program, and an existing
+"password-protected socket" counter. No detector change. Notes: [RELEASE_NOTES_v0.2.1.md](RELEASE_NOTES_v0.2.1.md).
+
+- **OBS WebSocket overlay output** (optional, off by default): the app copies `obs_output/chest_counter.txt` into a chosen
+  OBS Text source through OBS's built-in WebSocket server. The text file stays the source of truth; the worker is
+  untouched. Password in Windows Credential Manager; only four request types are ever sent.
+- **OBS projector input** (`source = "window"`): an OBS "Windowed Projector (Source)" captured with Windows Graphics
+  Capture (FFmpeg `gfxcapture`, already in the bundled FFmpeg). Letterbox bars are cut, a minimized or closed window is
+  reported. Tested with a stand-in window; a real OBS projector + capture card test is still open.
+- **Analysis-rate presets** in Settings: 15 (Recommended), 10 (Balanced), 5 (Performance), with measured trade-offs.
+- **Deferred:** OBS WebSocket screenshots as a video input (`GetSourceScreenshot`): OBS renders, synchronously copies back
+  and compresses every analysed picture; only worth offering after a measurement on a live stream (OBS `GetStats`:
+  render-lag skipped frames). Offline evidence so far: JPEG quality 95 (4:4:4) left every counted decision unchanged,
+  quality 90 (4:2:0) did not; detection needs 15 pictures per second.
 
 ### v0.3.0 - Match Tracking & Statistics Foundation (planned)
 
@@ -163,7 +181,7 @@ Validation required before release: see the checklist at the end of [INPUT_OPTIO
 
 ## Later
 
-- OBS WebSocket for source discovery (after measuring its cost on OBS).
+- OBS WebSocket screenshots as a video input (see v0.2.1 "Deferred"), only after a live-stream measurement.
 - Own OBS plugin for a fully integrated "pick your gameplay source" experience, if users ask for it.
 - More Fortnite languages (needs a pop-up word template per language).
 - Accuracy: validate the blurred second trigger (see [ACCURACY_NOTES.md](ACCURACY_NOTES.md)) with labeled live sessions.

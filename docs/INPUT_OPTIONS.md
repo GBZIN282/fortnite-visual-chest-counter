@@ -1,5 +1,15 @@
 # Video input options for professional streamers (feasibility audit, Nov 2026)
 
+> **Update (v0.2.1, 2026-11-08):** option **A is implemented** as the `window` source ("OBS projector" in the app's Video
+> source list): `gfxcapture=hwnd=...:capture_cursor=0:max_framerate=30:resize_mode=scale_aspect,hwdownload,format=bgra`
+> plus a centred 16:9 crop (an OBS projector letterboxes non-16:9 windows). Measured with a stand-in window (ffplay playing
+> the PS5 test clip) through the real `live --gui` worker and the shipped FFmpeg: 1280x720, 15.0 pictures per second,
+> 0 dropped, every chest the file pipeline counted on that segment also counted; a window behind other windows keeps
+> working; a **minimized** window gives black pictures (no FFmpeg error - the worker watches the window and warns); a
+> **closed** window can leave FFmpeg waiting without frames (the worker stops itself with a message). Still open: a real
+> OBS projector with a physical capture card, OBS running as administrator, OBS's main window minimized, 125-150 % scaling.
+> Option **C** (WebSocket screenshots) was measured offline and deferred - see [ROADMAP.md](ROADMAP.md) v0.2.1.
+
 Requirement: a streamer can connect the counter to gameplay **OBS already captures**, without disturbing OBS, without
 occupying OBS Virtual Camera, and without opening the capture card a second time. Detector and v0.1.0 release unchanged.
 

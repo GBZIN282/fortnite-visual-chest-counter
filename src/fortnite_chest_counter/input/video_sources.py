@@ -15,6 +15,10 @@ Backends (all passive pixel capture: nothing touches Fortnite, nothing runs on t
               some card drivers refuse a second reader while OBS holds the device.
   desktop     screen capture (gdigrab) of one monitor. Fallback for single-PC users: alt-tab,
               covering windows, resolution changes and overlays all corrupt what the detector sees.
+  window      one window, captured with Windows Graphics Capture (FFmpeg `gfxcapture`): meant for an OBS
+              "Windowed Projector (Source)" of the gameplay source. For streamers whose capture card is owned by
+              OBS and whose Virtual Camera is used by another app. The window may sit behind other windows; a
+              minimised window only gives black pictures, so it is watched and the user is told.
   file        a video file played in real time. For testing the live pipeline without a device.
 """
 
@@ -22,6 +26,7 @@ import re
 import subprocess
 import threading
 import time
+from collections import deque
 
 import numpy as np
 
@@ -168,7 +173,192 @@ class LiveSource:
         return time.monotonic() - self._t0
 
 
-def make_source(kind, fps, device=None, monitor=1, video=None, start=0.0, duration=None):
+# ==================================================================
+# WINDOW CAPTURE (an OBS projector window)
+# ==================================================================
+
+OBS_EXECUTABLES = ("obs64.exe", "obs32.exe", "obs.exe")
+# Only used to list projectors first; titles are translated by OBS, so nothing depends on these words.
+_PROJECTOR_WORDS = ("projector", "projetor", "proyector", "projecteur", "projektor", "proiettore", "multiview")
+WINDOW_STEPS = ("  1. In OBS, right-click your gameplay source (for example the capture card) and choose\n"
+                "     \"Windowed Projector (Source)\"\n"
+                "  2. Leave that window open - it can stay behind other windows, but do not minimize it\n"
+                "  3. In the app click Refresh and pick it in the Video source list")
+
+
+def _win32():
+    """(user32, kernel32) with the signatures used here, or None when not on Windows."""
+    import ctypes
+    from ctypes import wintypes
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    except (AttributeError, OSError):
+        return None
+    for name, args, res in (("IsWindowVisible", [wintypes.HWND], wintypes.BOOL), ("IsIconic", [wintypes.HWND], wintypes.BOOL),
+                            ("IsWindow", [wintypes.HWND], wintypes.BOOL),
+                            ("GetWindowTextLengthW", [wintypes.HWND], ctypes.c_int),
+                            ("GetWindowTextW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
+                            ("GetWindowThreadProcessId", [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)], wintypes.DWORD)):
+        getattr(user32, name).argtypes, getattr(user32, name).restype = args, res
+    kernel32.OpenProcess.argtypes, kernel32.OpenProcess.restype = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                                    ctypes.POINTER(wintypes.DWORD)]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    return user32, kernel32
+
+
+def _process_name(kernel32, pid):
+    import ctypes
+    from ctypes import wintypes
+    handle = kernel32.OpenProcess(0x1000, False, pid)            # PROCESS_QUERY_LIMITED_INFORMATION (works for elevated OBS)
+    if not handle:
+        return ""
+    try:
+        size = wintypes.DWORD(1024)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return buf.value.replace("/", "\\").rsplit("\\", 1)[-1].lower()
+        return ""
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def list_windows():
+    """Visible top-level windows with a title -> [(hwnd, title, exe name in lower case, minimized)]. [] off Windows."""
+    import ctypes
+    from ctypes import wintypes
+    api = _win32()
+    if api is None:
+        return []
+    user32, kernel32 = api
+    found = []
+    proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def callback(hwnd, _data):
+        try:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n <= 0:
+                return True
+            buf = ctypes.create_unicode_buffer(n + 1)
+            user32.GetWindowTextW(hwnd, buf, n + 1)
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            found.append((int(hwnd), buf.value, _process_name(kernel32, pid.value), bool(user32.IsIconic(hwnd))))
+        except Exception:
+            pass                                                   # a window that vanished meanwhile
+        return True
+
+    user32.EnumWindows(proc_type(callback), 0)
+    return found
+
+
+def _is_obs_main_window(title):
+    return re.match(r"^OBS (Studio )?\d", title) is not None   # "OBS Studio 33.0.1 - Profile: ... - Scenes: ..."
+
+
+def list_obs_windows(windows=None):
+    """OBS windows the counter can capture (projectors first, OBS's main window left out) -> [(title, minimized)]."""
+    windows = list_windows() if windows is None else windows
+    seen, out = set(), []
+    for _, title, exe, minimized in windows:
+        if exe in OBS_EXECUTABLES and not _is_obs_main_window(title) and title not in seen:
+            seen.add(title)
+            out.append((title, minimized))
+    out.sort(key=lambda w: (not any(word in w[0].lower() for word in _PROJECTOR_WORDS), w[0].lower()))
+    return out
+
+
+def find_window(title, windows=None):
+    """HWND of the visible window with exactly this title (an OBS window first), or None."""
+    windows = list_windows() if windows is None else windows
+    matches = [w for w in windows if w[1] == title]
+    matches.sort(key=lambda w: w[2] not in OBS_EXECUTABLES)
+    return matches[0][0] if matches else None
+
+
+def window_state(hwnd):
+    """'gone' | 'minimized' | 'hidden' | 'ok' for a window handle."""
+    api = _win32()
+    if api is None:
+        return "ok"
+    user32, _ = api
+    if not user32.IsWindow(hwnd):
+        return "gone"
+    if user32.IsIconic(hwnd):
+        return "minimized"
+    if not user32.IsWindowVisible(hwnd):
+        return "hidden"
+    return "ok"
+
+
+def window_capture_args(hwnd):
+    """FFmpeg input for one window: Windows Graphics Capture (no cursor, no border), copied to normal memory, and cut to
+    16:9 from the centre - an OBS projector letterboxes the picture when its window is not 16:9, and the detector needs
+    the picture without bars. resize_mode=scale_aspect keeps the frame size fixed when the window is resized."""
+    graph = (f"gfxcapture=hwnd={int(hwnd)}:capture_cursor=0:max_framerate=30:resize_mode=scale_aspect,"
+             "hwdownload,format=bgra,crop=w='min(iw,ih*16/9)':h='min(ih,iw*9/16)'")
+    return ["-f", "lavfi", "-i", graph]
+
+
+class WindowSource(LiveSource):
+    """A window (an OBS Windowed Projector) as a live source. Same latest-frame reader as every other source; a small
+    watcher notices a closed window (FFmpeg would then wait for ever) and a minimised one (black pictures)."""
+
+    def __init__(self, title, fps):
+        super().__init__(f"window: {title}", [], fps)
+        self.title, self.hwnd = title, None
+        self._ended_reason = None
+        self._notices = deque()
+
+    @property
+    def ended_reason(self):
+        """Why the pictures stopped, for the message at the end ("was closed" also when FFmpeg noticed it first)."""
+        if self._ended_reason is None and self.hwnd and window_state(self.hwnd) == "gone":
+            self._ended_reason = "the projector window was closed"
+        return self._ended_reason
+
+    def open(self, timeout=20.0):
+        self.hwnd = find_window(self.title)
+        if not self.hwnd:
+            raise RuntimeError(f'the window "{self.title}" is not open')
+        if window_state(self.hwnd) == "minimized":
+            raise RuntimeError(f'the window "{self.title}" is minimized')
+        self.input_args = window_capture_args(self.hwnd)
+        info = super().open(timeout)
+        threading.Thread(target=self._watch, daemon=True, name="window-watch").start()
+        return info
+
+    def _watch(self):
+        last, previous = "ok", "ok"
+        while not self._stop:
+            time.sleep(0.5)
+            state = window_state(self.hwnd)
+            if state == "gone":
+                self._ended_reason = "the projector window was closed"
+                self.close(wait=False)
+                return
+            seen, previous = previous, state
+            if state != last and state == seen:             # the same for 1 s: no notice for a flicker while restoring
+                if state in ("minimized", "hidden"):
+                    self._notices.append(("warn", f"the projector window is {state}: the counter only sees a black picture "
+                                                  "and cannot count until it is shown again (it may stay behind other "
+                                                  "windows, just not minimized)."))
+                elif last in ("minimized", "hidden"):
+                    self._notices.append(("info", "the projector window is visible again - counting continues."))
+                last = state
+
+    def take_notices(self):
+        """[(level, text)] since the last call (main loop)."""
+        out = []
+        while self._notices:
+            out.append(self._notices.popleft())
+        return out
+
+
+def make_source(kind, fps, device=None, monitor=1, video=None, start=0.0, duration=None, window=None):
     """Build a LiveSource for one of the backends."""
     if kind in ("obs-camera", "device"):
         name = "OBS Virtual Camera" if kind == "obs-camera" else device
@@ -183,6 +373,11 @@ def make_source(kind, fps, device=None, monitor=1, video=None, start=0.0, durati
         return LiveSource(f"desktop: monitor {monitor} ({w}x{h} at {x},{y})",
                           ["-f", "gdigrab", "-draw_mouse", "0", "-framerate", "30", "-offset_x", str(x), "-offset_y", str(y),
                            "-video_size", f"{w}x{h}", "-i", "desktop"], fps)
+    if kind == "window":
+        if not window:
+            raise ValueError("source 'window' needs a window title: pick the OBS projector in the app's Video source list, "
+                             "or set [live] window in config.toml")
+        return WindowSource(window, fps)
     if kind == "file":
         args = ["-re"] + (["-ss", f"{start:.3f}"] if start else []) + (["-t", f"{duration:.3f}"] if duration else []) + ["-i", str(video)]
         return LiveSource(f"file (real time): {video}", args, fps)

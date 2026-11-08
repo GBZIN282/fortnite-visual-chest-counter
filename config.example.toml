@@ -13,7 +13,9 @@
 # adds a small risk of false alarms; on our English test videos it made no difference).
 languages = ["en", "pt"]
 
-# How many frames per second are analysed (5-30). 15 is what the detector was tested at.
+# How many pictures per second are analysed (5-30). The app's Settings page offers 15 (Recommended - what the detector
+# was built and tested with), 10 (Balanced) and 5 (Performance). Fewer pictures can miss chests: on our test recordings
+# 10 found the same chests but added a few extra APPROX counts, and 5 missed some chests.
 process_fps = 15
 
 # Which strong detections go into the CERTAIN count:
@@ -114,13 +116,31 @@ dir = "captures"
 #   "obs-camera" = OBS Virtual Camera (recommended; single PC and dual PC)
 #   "device"     = a capture card opened directly (advanced; set "device" below)
 #   "desktop"    = capture a monitor (fallback, easily disturbed by other windows)
+#   "window"     = an OBS "Windowed Projector (Source)" window (when OBS owns the capture card and the Virtual Camera is
+#                  used by another app; set "window" below - the app's Video source list does it for you)
 source = "obs-camera"
 # Only for source = "device": the exact device name (the app's Video source list sets it for you).
 device = "OBS Virtual Camera"
 # Only for source = "desktop": which monitor (1 = the first).
 monitor = 1
+# Only for source = "window": the projector window's exact title, e.g. "Windowed Projector (Source) - Capture Card".
+# Keep that window open (it may be behind other windows, but not minimized).
+window = ""
 # How often the status line is printed, in seconds.
 status_interval_seconds = 5
+
+[obs_websocket]
+# OPTIONAL: besides writing obs_output\chest_counter.txt, put the same text straight into a Text source in OBS through
+# OBS's built-in WebSocket server (OBS 28+: Tools -> WebSocket Server Settings -> Enable WebSocket server). Updates show
+# at once and no file path is needed. Easiest: the app's Overlay page. The text file is written either way.
+# The password is NOT stored here: the app keeps it in Windows Credential Manager.
+enabled = false
+# The PC running OBS: 127.0.0.1 = this PC. For OBS on another PC use its IPv4 address (and allow TCP port 4455 there).
+host = "127.0.0.1"
+port = 4455
+# The Text source to update (its name in OBS). The app also remembers its OBS id, so renaming it in OBS is followed.
+source = ""
+source_uuid = ""
 
 [app]
 # The desktop app reopens with the size, position and maximised state it was closed with (saved in state/window.json).

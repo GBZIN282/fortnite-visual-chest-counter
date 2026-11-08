@@ -33,6 +33,8 @@ from fortnite_chest_counter import counter as C
 from fortnite_chest_counter import paths, settings
 from fortnite_chest_counter.gui import theme
 from fortnite_chest_counter.gui.worker import Worker, run_command
+from fortnite_chest_counter.obs import credentials as obs_credentials
+from fortnite_chest_counter.obs.link import TextOutputLink
 from fortnite_chest_counter.preview import PreviewReader, block_name
 from fortnite_chest_counter.progress import Eta, clock_text, describe
 from fortnite_chest_counter.version import APP_NAME, RELEASE_CHANNEL, TAGLINE, __version__
@@ -47,6 +49,12 @@ RECORDING_TEXT = {"marks": "only around your marks", "events": "around chest dec
 REPO_URL = "https://github.com/GabrielGzS/fortnite-visual-chest-counter"
 LOG_LIMIT = 3000
 fmt = settings.format_count
+# OBS WebSocket output (obs/link.py) states -> (short name, colour)
+OBS_STATES = {"off": ("Off", theme.MUTED), "connecting": ("Connecting", theme.INFO), "waiting": ("Waiting for OBS", theme.APPROX),
+              "pick": ("Connected - pick a Text source", theme.APPROX), "missing": ("Connected - source not found", theme.APPROX),
+              "reads_file": ("Connected - the source reads a file", theme.APPROX), "live": ("Connected", theme.CERTAIN),
+              "password": ("Password problem", theme.REJECT), "kicked": ("Disconnected by OBS", theme.REJECT),
+              "unsupported": ("Not OBS WebSocket 5", theme.REJECT), "error": ("Problem", theme.REJECT)}
 
 
 # ==================================================================
@@ -730,6 +738,9 @@ class Dashboard(QWidget):
         viewers.addWidget(self.viewers, 1)
         viewers.addWidget(button("Change what viewers see", "link", on_click=lambda: win.go_to(1)))
         layout.addLayout(viewers)
+        self.obs_line = label("", "hint", wrap=True)          # OBS WebSocket output status (only while it is on)
+        self.obs_line.hide()
+        layout.addWidget(self.obs_line)
 
         # source + start
         box, box_layout = card()
@@ -901,6 +912,56 @@ class OverlayPage(QWidget):
         row.addWidget(button("Undo changes", on_click=self.load))
         row.addWidget(button("Apply", "primary", on_click=self.apply))
         layout.addLayout(row)
+
+        box, box_layout = card("OBS WebSocket (optional)",
+                               "Instead of OBS reading the text file (it looks about once a second), the app can put the "
+                               "same text straight into a Text source in OBS: every change shows at once and no file path "
+                               "is needed. The text file is still written either way. Changes here apply immediately.")
+        self.ws_enabled = QCheckBox("Update a Text source in OBS directly (OBS WebSocket)")
+        self.ws_enabled.toggled.connect(self._ws_toggled)
+        box_layout.addWidget(self.ws_enabled)
+        self.ws_box = QWidget()
+        grid = QGridLayout(self.ws_box)
+        grid.setContentsMargins(0, 4, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+        self.ws_host = QLineEdit()
+        self.ws_host.setToolTip("127.0.0.1 = OBS runs on this PC. For OBS on another PC: that PC's IPv4 address.")
+        self.ws_port = QSpinBox()
+        self.ws_port.setRange(1, 65535)
+        self.ws_password = QLineEdit()
+        self.ws_password.setEchoMode(QLineEdit.Password)
+        self.ws_source = QComboBox()
+        self.ws_source.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.ws_source.activated.connect(self._ws_source_picked)
+        grid.addWidget(label("OBS on"), 0, 0)
+        grid.addWidget(self.ws_host, 0, 1)
+        grid.addWidget(label("Port"), 0, 2)
+        grid.addWidget(self.ws_port, 0, 3)
+        grid.addWidget(label("Password"), 1, 0)
+        grid.addWidget(self.ws_password, 1, 1, 1, 3)
+        self.ws_forget = button("Forget password", "link", on_click=self._ws_forget)
+        grid.addWidget(self.ws_forget, 1, 4)
+        grid.addWidget(label("Text source"), 2, 0)
+        grid.addWidget(self.ws_source, 2, 1, 1, 3)
+        self.ws_refresh = button("Refresh", tip="List OBS's Text sources again", on_click=self._ws_refresh)
+        grid.addWidget(self.ws_refresh, 2, 4)
+        grid.setColumnStretch(1, 1)
+        box_layout.addWidget(self.ws_box)
+        self.ws_status = label("", "hint", wrap=True)
+        box_layout.addWidget(self.ws_status)
+        row = QHBoxLayout()
+        row.addWidget(label('In OBS: Tools > WebSocket Server Settings > tick "Enable WebSocket server". '
+                            '"Show Connect Info" shows the password. The password is kept in Windows Credential '
+                            "Manager, never in a file.", "hint", wrap=True), 1)
+        self.ws_direct = button("Use direct updates", tip='Untick "Read from file" on this source, so the app updates it',
+                                on_click=lambda: self.win.obs_link.use_direct_updates())
+        self.ws_direct.hide()
+        row.addWidget(self.ws_direct, 0, Qt.AlignTop)
+        self.ws_connect = button("Connect", "primary", on_click=self._ws_connect)
+        row.addWidget(self.ws_connect, 0, Qt.AlignTop)
+        box_layout.addLayout(row)
+        layout.addWidget(box)
         layout.addStretch(1)
         self._loading = False
 
@@ -914,9 +975,108 @@ class OverlayPage(QWidget):
         self.approx_text.setText(C.hash_from_text(self.display["approx_text"]))
         self.line_text.setText(C.markers_from_line(self.display["combined_status_format"]))
         self.thousands.setChecked(self.display["use_thousands_separator"])
+        ws = cfg["obs_websocket"]
+        self.ws_enabled.blockSignals(True)
+        self.ws_enabled.setChecked(ws["enabled"])
+        self.ws_enabled.blockSignals(False)
+        self.ws_box.setEnabled(ws["enabled"])
+        self.ws_connect.setEnabled(ws["enabled"])
+        self.ws_host.setText(ws["host"])
+        self.ws_port.setValue(ws["port"])
+        self.ws_password.clear()
+        self._ws_password_hint()
         self._loading = False
         self.saved.setText("")
         self._changed()
+        self.show_obs_status(self.win.obs_link.status()[1])
+
+    # ---- OBS WebSocket card
+    def _ws_password_hint(self):
+        saved = obs_credentials.has_password()
+        self.ws_password.setPlaceholderText("Saved - type a new one to replace it" if saved else
+                                            "From OBS: Show Connect Info (leave empty if OBS asks for none)")
+        self.ws_forget.setVisible(saved)
+
+    def _ws_save(self, values):
+        try:
+            C.update_config_file(config_file(), "obs_websocket", values)
+            return True
+        except (C.UserError, OSError) as error:
+            show_error(self, str(error))
+            return False
+
+    def _ws_toggled(self, on):
+        if self._loading:
+            return
+        if self._ws_save({"enabled": on}):
+            self.ws_box.setEnabled(on)
+            self.ws_connect.setEnabled(on)
+            self.win.apply_obs_settings()
+
+    def _ws_connect(self):
+        host = self.ws_host.text().strip()
+        if not host or any(c.isspace() for c in host):
+            show_error(self, 'Enter the PC that runs OBS: 127.0.0.1 for this PC, or that PC\'s IPv4 address (for example '
+                             '192.168.1.50).')
+            return
+        typed = self.ws_password.text()
+        if typed:
+            try:
+                obs_credentials.save_password(typed)
+            except (OSError, ValueError) as error:
+                show_error(self, f"The password could not be saved in Windows Credential Manager ({error}).")
+                return
+            self.ws_password.clear()
+            self._ws_password_hint()
+        if self._ws_save({"host": host, "port": self.ws_port.value()}):
+            self.win.apply_obs_settings(reconnect=True)
+
+    def _ws_forget(self):
+        try:
+            obs_credentials.forget_password()
+        except OSError as error:
+            show_error(self, f"The password could not be removed ({error}).")
+            return
+        self._ws_password_hint()
+        self.win.apply_obs_settings(reconnect=True)
+
+    def _ws_refresh(self):
+        state = self.win.obs_link.status()[1]["state"]
+        if state in ("live", "pick", "missing", "reads_file"):
+            self.win.obs_link.refresh_sources()
+        else:
+            self.win.apply_obs_settings(reconnect=True)
+
+    def _ws_source_picked(self, index):
+        data = self.ws_source.itemData(index)
+        if not data:
+            return
+        if self._ws_save({"source": data["name"], "source_uuid": data["uuid"]}):
+            self.win.apply_obs_settings()
+
+    def show_obs_status(self, status):
+        name, color = OBS_STATES.get(status["state"], (status["state"], theme.MUTED))
+        details = status.get("message", "")
+        if status.get("obs") and status["state"] not in ("off", "connecting"):
+            details += f"   ({status['obs']})"
+        self.ws_status.setText(f"●  {name}" + (f" - {details}" if details else ""))
+        self.ws_status.setStyleSheet(f"color: {color};")
+        self.ws_direct.setVisible(status["state"] == "reads_file")
+        self.ws_source.blockSignals(True)
+        self.ws_source.clear()
+        found = status.get("sources") or []
+        current = status.get("source") or load_cfg()[0]["obs_websocket"]["source"]
+        if not found:
+            self.ws_source.addItem(current or "(connect to list OBS's Text sources)", None)
+        else:
+            if not any(s["name"] == current for s in found):
+                self.ws_source.addItem("Pick a Text source ..." if not current else f"{current}   (not in OBS)", None)
+            for s in found:
+                kind = "FreeType 2" if s["kind"] == "text_ft2_source" else "GDI+"
+                self.ws_source.addItem(f"{s['name']}   (Text {kind})", s)
+                if s["name"] == current:
+                    self.ws_source.setCurrentIndex(self.ws_source.count() - 1)
+        self.ws_source.blockSignals(False)
 
     def _mode(self):
         return next(m for m, b in self.mode_buttons.items() if b.isChecked())
@@ -1000,6 +1160,17 @@ class SettingsPage(QWidget):
         box_layout.addWidget(self.language)
         layout.addWidget(box)
 
+        box, box_layout = card("Pictures analysed per second",
+                               "How many pictures of your gameplay the counter checks every second. A chest pop-up is "
+                               "on screen only briefly, so fewer pictures save work on this PC but can miss chests. "
+                               "OBS and your stream are not affected either way.")
+        self.fps = QComboBox()
+        self.fps.currentIndexChanged.connect(self._fps_changed)
+        box_layout.addWidget(self.fps)
+        self.fps_hint = label("", "hint", wrap=True)
+        box_layout.addWidget(self.fps_hint)
+        layout.addWidget(box)
+
         box, box_layout = card("Session logs", "Logs are small text files in the logs folder. They are what you send when "
                                                "reporting a problem.")
         self.logging = QCheckBox("Keep a log of every counting session")
@@ -1029,7 +1200,7 @@ class SettingsPage(QWidget):
         box_layout.addWidget(self.remember_window)
         layout.addWidget(box)
 
-        box, box_layout = card("Advanced", "Everything else (detector cadence, which evidence counts) is in config.toml. "
+        box, box_layout = card("Advanced", "Everything else (for example which evidence counts) is in config.toml. "
                                            "Edit it only if you know why; a typo shows a warning and uses the default.")
         row = QHBoxLayout()
         row.addWidget(button("Open config.toml", on_click=self._open_config))
@@ -1048,6 +1219,18 @@ class SettingsPage(QWidget):
     def load(self):
         cfg, _ = load_cfg()
         self.language.setCurrentIndex(settings.language_choice(cfg["detector"]["languages"]))
+        fps = cfg["detector"]["process_fps"]
+        self.fps.blockSignals(True)
+        self.fps.clear()
+        for value, name, _ in settings.FPS_PRESETS:
+            self.fps.addItem(f"{value} per second   ({name})", value)
+        if settings.fps_choice(fps) is None:
+            self.fps.addItem(f"{fps} per second   (custom, from config.toml)", fps)
+            self.fps.setCurrentIndex(self.fps.count() - 1)
+        else:
+            self.fps.setCurrentIndex(settings.fps_choice(fps))
+        self.fps.blockSignals(False)
+        self._fps_changed()
         self.logging.setChecked(cfg["logging"]["enabled"])
         self.snapshots.setChecked(cfg["logging"]["save_snapshots"])
         self.snapshots.setEnabled(cfg["logging"]["enabled"])
@@ -1055,10 +1238,15 @@ class SettingsPage(QWidget):
         self.remember_window.setChecked(cfg["app"]["remember_window"])
         self.saved.setText("")
 
+    def _fps_changed(self, _index=None):
+        index = settings.fps_choice(self.fps.currentData())
+        self.fps_hint.setText(settings.FPS_PRESETS[index][2] if index is not None else
+                              "A value set in config.toml. 15 per second is what the counter was tested with.")
+
     def save(self):
         langs = self.language.currentData()
         try:
-            C.update_config_file(config_file(), "detector", {"languages": langs})
+            C.update_config_file(config_file(), "detector", {"languages": langs, "process_fps": self.fps.currentData()})
             C.update_config_file(config_file(), "logging", {"enabled": self.logging.isChecked(),
                                                             "save_snapshots": self.snapshots.isChecked()})
             C.update_config_file(config_file(), "capture", {"quality": "lossless" if self.lossless.isChecked() else "standard"})
@@ -1221,6 +1409,9 @@ class MainWindow(QMainWindow):
         self._mark_flash = QTimer(self)                     # the "Marked" confirmation stays visible a few seconds
         self._mark_flash.setSingleShot(True)
         self._mark_flash.timeout.connect(self.update_recording_ui)
+        self.obs_link = TextOutputLink().start()            # optional OBS WebSocket output; off unless configured
+        self._obs_version = -1
+        self._obs_logged = None                             # last OBS WebSocket state written to the activity log
 
         root = QWidget()
         outer = QHBoxLayout(root)
@@ -1244,6 +1435,7 @@ class MainWindow(QMainWindow):
         self.read_state(force=True)
         if not C.counter_is_running(paths.APP_DIR / load_cfg()[0]["state"]["path"]):
             self.write_obs_files(quiet=True)          # a fresh unzip/update carries zero placeholders
+        self.apply_obs_settings()
         self.overlay.load()
         self.settings_page.load()
         rec = self.dashboard.rec_mode
@@ -1310,7 +1502,7 @@ class MainWindow(QMainWindow):
 
         def scan():
             from fortnite_chest_counter.input import video_sources as sources
-            devices, monitors = [], []
+            devices, monitors, windows = [], [], []
             try:
                 devices = [n for n, k in sources.list_video_devices() if k in ("video", "none")]
             except Exception:
@@ -1319,12 +1511,16 @@ class MainWindow(QMainWindow):
                 monitors = sources.list_monitors()
             except Exception:
                 pass
-            self._scan_result = (devices, monitors)
+            try:
+                windows = sources.list_obs_windows()
+            except Exception:
+                pass
+            self._scan_result = (devices, monitors, windows)
 
         self._source_scan = threading.Thread(target=scan, daemon=True)
         self._source_scan.start()
 
-    def _fill_sources(self, devices, monitors):
+    def _fill_sources(self, devices, monitors, windows=()):
         cfg, _ = load_cfg()
         live = cfg["live"]
         items = [("OBS Virtual Camera   (recommended)", {"source": "obs-camera"})]
@@ -1334,6 +1530,13 @@ class MainWindow(QMainWindow):
         for name in names:
             missing = "" if name in devices else "   (not found right now)"
             items.append((f"Capture device:  {name}{missing}", {"source": "device", "device": name}))
+        titles = [title for title, _ in windows]
+        for title, minimized in windows:
+            items.append((f"OBS projector:  {title}" + ("   (minimized - restore it)" if minimized else ""),
+                          {"source": "window", "window": title}))
+        if live["source"] == "window" and live["window"] and live["window"] not in titles:
+            items.append((f"OBS projector:  {live['window']}   (not open right now)",
+                          {"source": "window", "window": live["window"]}))
         for i, (_, _, w, h) in enumerate(monitors, 1):
             items.append((f"Screen {i}   ·   {w} x {h}", {"source": "desktop", "monitor": i}))
         dev_video = os.environ.get("FCC_DEV_VIDEO")
@@ -1344,7 +1547,8 @@ class MainWindow(QMainWindow):
         self.dashboard.source.clear()
         for text, data in items:
             self.dashboard.source.addItem(text, data)
-        wanted = current or {"source": live["source"], "device": live["device"], "monitor": live["monitor"]}
+        wanted = current or {"source": live["source"], "device": live["device"], "monitor": live["monitor"],
+                             "window": live["window"]}
         index = 0
         for i, (_, data) in enumerate(items):
             if data["source"] == wanted.get("source") and all(data[k] == wanted.get(k) for k in data if k != "source"):
@@ -1353,12 +1557,14 @@ class MainWindow(QMainWindow):
         self.dashboard.source.setCurrentIndex(index)
         self.dashboard.source.blockSignals(False)
         obs = "OBS Virtual Camera" in devices
+        projector_tip = ("" if windows else " Virtual Camera busy or the capture card used by OBS? In OBS, right-click "
+                         "your gameplay source > Windowed Projector (Source), then click Refresh.")
         self.dashboard.source_hint.setText(
             "" if obs or not devices else
-            "OBS Virtual Camera was not found: open OBS Studio (28 or newer) and click Start Virtual Camera.")
+            "OBS Virtual Camera was not found: open OBS Studio (28 or newer) and click Start Virtual Camera." + projector_tip)
         if not devices and not obs:
             self.dashboard.source_hint.setText("No video devices found. For the recommended setup, open OBS Studio and "
-                                               "click Start Virtual Camera, then click Refresh.")
+                                               "click Start Virtual Camera, then click Refresh." + projector_tip)
         self.dashboard.refresh.setEnabled(True)
 
     # ---- counting
@@ -1385,6 +1591,8 @@ class MainWindow(QMainWindow):
                 values["device"] = data["device"]
             if data["source"] == "desktop":
                 values["monitor"] = data["monitor"]
+            if data["source"] == "window":
+                values["window"] = data["window"]
             try:
                 C.update_config_file(config_file(), "live", values)   # the console version starts the same way
             except (C.UserError, OSError) as error:
@@ -1442,12 +1650,52 @@ class MainWindow(QMainWindow):
 
     def _tick(self):
         if self._source_scan is not None and self._scan_result is not None:
-            devices, monitors = self._scan_result
+            devices, monitors, windows = self._scan_result
             self._scan_result = None
             self._source_scan = None
-            self._fill_sources(devices, monitors)
+            self._fill_sources(devices, monitors, windows)
         for message in self.worker.drain():
             self.handle(message)
+        version, status = self.obs_link.status()
+        if version != self._obs_version:
+            self._obs_version = version
+            self.obs_status_changed(status)
+
+    # ---- OBS WebSocket output (obs/link.py runs it in its own thread; this only configures and shows it)
+    def apply_obs_settings(self, reconnect=False):
+        cfg, _ = load_cfg()
+        ws = cfg["obs_websocket"]
+        overlay = (paths.APP_DIR / cfg["state"]["obs_dir"] / "chest_counter.txt").resolve()
+        password = obs_credentials.load_password() if ws["enabled"] else ""
+        self.obs_link.configure(ws["enabled"], ws["host"], ws["port"], password, ws["source"], ws["source_uuid"], overlay)
+        if reconnect:
+            self.obs_link.reconnect()
+
+    def obs_status_changed(self, status):
+        self.overlay.show_obs_status(status)
+        line = self.dashboard.obs_line
+        if status["state"] == "off":
+            line.hide()
+        else:
+            name, color = OBS_STATES.get(status["state"], (status["state"], theme.MUTED))
+            line.setText(f"OBS WebSocket: {status['message'] if status['state'] == 'live' else name}")
+            line.setStyleSheet(f"color: {color};")
+            line.show()
+        previous = self._obs_logged
+        if status["state"] != previous and status["state"] != "connecting":
+            self._obs_logged = status["state"]
+            if status["state"] != "off" or previous is not None:
+                self.add_log({"type": "warn" if OBS_STATES.get(status["state"], ("", ""))[1] == theme.REJECT else "info",
+                              "text": f"OBS WebSocket: {status['message']}"})
+        # follow a rename in OBS / remember the source's OBS id (so a later rename is followed too)
+        if status["state"] in ("live", "reads_file") and status.get("source"):
+            ws = load_cfg()[0]["obs_websocket"]
+            if (ws["source"], ws["source_uuid"]) != (status["source"], status.get("uuid", "")):
+                try:
+                    C.update_config_file(config_file(), "obs_websocket", {"source": status["source"],
+                                                                          "source_uuid": status.get("uuid", "")})
+                except (C.UserError, OSError):
+                    pass
 
     def handle(self, message):
         kind = message.get("type")
@@ -1769,6 +2017,7 @@ class MainWindow(QMainWindow):
         self.save_layout()
         if self.preview_reader is not None:
             self.preview_reader.close()
+        self.obs_link.stop(timeout=0.5)
         super().closeEvent(event)
         QApplication.quit()
 

@@ -64,11 +64,13 @@ The app always runs on the PC with OBS that streams (or the only PC). Step-by-st
 | Fortnite and OBS on **one PC** | [Single PC](docs/guides/obs-single-pc.md) | Yes |
 | **Gaming PC + streaming PC** on the same network, no capture card | [Dual PC over the network (SRT)](docs/guides/obs-dual-pc-srt.md) | **Yes** - 2026-11-07, v0.2.0 |
 | **Console or gaming PC + capture card** + streaming PC | [Capture card](docs/guides/capture-card.md) | Counter side yes; not yet with a physical card |
+| Capture card **owned by OBS** and **Virtual Camera used by another program** | [OBS projector window](docs/guides/obs-projector.md) | Window capture yes; not yet with a real OBS projector |
 | A **video file** | [Recorded video](docs/guides/recorded-video.md) | Yes |
 | A livestream or video in your browser | [Single PC → watching a stream](docs/guides/obs-single-pc.md#counting-a-stream-or-video-you-are-watching) | Yes |
 
-Then [show the numbers on stream](docs/guides/obs-overlay.md). Virtual Camera already used by another program? Use an OBS
-projector on a spare monitor ([single-PC guide](docs/guides/obs-single-pc.md#virtual-camera-already-used-by-another-program)).
+Then [show the numbers on stream](docs/guides/obs-overlay.md) - from the text file, or instantly through OBS's built-in
+WebSocket (optional). Virtual Camera already used by another program? Read your gameplay from an
+[OBS projector window](docs/guides/obs-projector.md).
 
 ## Quick start (single PC)
 

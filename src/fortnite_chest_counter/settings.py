@@ -66,7 +66,15 @@ DEFAULTS = {
         "source": "obs-camera",                 # obs-camera | device | desktop | file
         "device": "OBS Virtual Camera",         # DirectShow device name for --source device
         "monitor": 1,                           # monitor number for --source desktop
+        "window": "",                           # window title for --source window (an OBS "Windowed Projector (Source)")
         "status_interval_seconds": 5,
+    },
+    "obs_websocket": {
+        "enabled": False,                       # also put the overlay text straight into an OBS Text source (OBS WebSocket 5)
+        "host": "127.0.0.1",                    # the PC running OBS (this PC by default)
+        "port": 4455,                           # OBS: Tools -> WebSocket Server Settings
+        "source": "",                           # the OBS Text source to update (its name)
+        "source_uuid": "",                      # its OBS id, so a rename in OBS is followed (set by the app)
     },
     "app": {
         "remember_window": True,                # the desktop app reopens with the size, position and maximised state it closed with
@@ -74,7 +82,7 @@ DEFAULTS = {
 }
 
 _TIERS = ("CERTAIN", "HIGH")
-_SOURCES = ("obs-camera", "device", "desktop", "file")
+_SOURCES = ("obs-camera", "device", "desktop", "window", "file")
 SHOW_MODES = ("both", "certain", "approx")
 BOTH_LAYOUTS = ("stacked", "inline")
 VERBOSITY_LEVELS = ("minimal", "normal", "debug")
@@ -83,6 +91,24 @@ CAPTURE_QUALITIES = ("standard", "lossless")
 # The app's language choice -> [detector] languages. "Both" is not automatic detection: it checks both words all the time.
 # (Real "Auto" - identify the language per match - needs match recognition first; see docs/ROADMAP.md.)
 LANGUAGE_CHOICES = (("English", ["en"]), ("Portuguese (Brazil)", ["pt"]), ("Both (English + Portuguese (Brazil))", ["en", "pt"]))
+
+
+# The app's "Pictures analysed per second" choice -> [detector] process_fps (config.toml still accepts any 5-30).
+# Measured (docs/RELEASE_NOTES_v0.2.1.md): on the two labelled test recordings (22 chests) 15 found 21, 10 the same 21 plus
+# 2 extra estimated counts, 5 found 18. Counter CPU on the development PC: 15 ~45 %, 10 ~44 %, 5 ~25 % of one core.
+FPS_PRESETS = (
+    (15, "Recommended", "What the counter was built and tested with. On our test PC the counter used about half of one "
+                        "CPU core."),
+    (10, "Balanced", "Fewer pictures to check. On our test PC this saved hardly any CPU, and on our test recordings it "
+                     "found the same chests but added a few extra estimated (APPROX) counts."),
+    (5, "Performance", "About half the CPU of 15 per second on our test PC, but it misses chests: on our test recordings "
+                       "it found 18 of the 21 chests that 15 per second found."),
+)
+
+
+def fps_choice(fps):
+    """Index in FPS_PRESETS for a process_fps value, or None for a custom value from config.toml."""
+    return next((i for i, (value, _, _) in enumerate(FPS_PRESETS) if value == fps), None)
 
 
 def language_choice(languages):
@@ -118,6 +144,17 @@ def _check(section, key, value):
         return (isinstance(value, bool), "must be true or false")
     if key == "process_fps":
         return (isinstance(value, int) and not isinstance(value, bool) and 5 <= value <= 30, "must be a whole number from 5 to 30")
+    if section == "live" and key == "window":
+        return (isinstance(value, str), "must be text in quotes")
+    if section == "obs_websocket":
+        if key == "port":
+            return (isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535,
+                    "must be a whole number from 1 to 65535")
+        if key == "host":
+            return (isinstance(value, str) and value.strip() != "" and not any(c.isspace() for c in value),
+                    "must be a PC name or IP address, e.g. \"127.0.0.1\"")
+        if key in ("source", "source_uuid"):
+            return (isinstance(value, str), "must be text in quotes")
     if key == "certain_min_tier":
         return (value in _TIERS, f"must be one of {list(_TIERS)}")
     if key == "source":

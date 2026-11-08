@@ -59,8 +59,12 @@ Have the video as a file? [Analyse it directly](recorded-video.md) - faster than
 
 ## Virtual Camera already used by another program?
 
-Use an **OBS projector** instead: in OBS right-click the gameplay source -> **Fullscreen Projector (Source)** -> a spare
-16:9 monitor, then pick that **Screen** in the app's **Video source** list (keep other windows off that monitor). OBS keeps
-the Virtual Camera for the other program. *(Not yet tested.)*
+Use an **OBS projector window** instead: in OBS right-click the gameplay source -> **Windowed Projector (Source)**, then
+pick **OBS projector: ...** in the app's **Video source** list (click **Refresh** first). The window may stay behind other
+windows, but not minimized. Full steps: [OBS projector window](obs-projector.md). OBS keeps the Virtual Camera for the
+other program.
+
+Alternative: **Fullscreen Projector (Source)** on a spare 16:9 monitor, then pick that **Screen** in the Video source list
+(keep other windows off that monitor). *(Not yet tested.)*
 
 Problems: [troubleshooting](troubleshooting.md).
