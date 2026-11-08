@@ -112,14 +112,16 @@ mark_after_seconds = 10
 dir = "captures"
 
 [live]
-# Where the video comes from:
-#   "obs-camera" = OBS Virtual Camera (recommended; single PC and dual PC)
-#   "device"     = a capture card opened directly (advanced; set "device" below)
-#   "desktop"    = capture a monitor (fallback, easily disturbed by other windows)
-#   "stream"     = a Twitch / YouTube livestream URL (set "url" below) - no OBS needed
+# Where the video comes from (the app's Video source list sets this for you; most used first):
+#   "stream"     = a Twitch / YouTube livestream URL (set "url" below) - no OBS needed. Video can arrive in bursts or
+#                  pause to buffer; the app reconnects by itself and keeps the counts
+#   "desktop"    = capture a monitor (set "monitor" below): play the stream or the game fullscreen on it - a small player
+#                  inside a web page is too small to read
+#   "obs-camera" = OBS Virtual Camera (your own stream's OBS scene; single PC, or a second PC fed over SRT)
+#   "device"     = a capture card opened directly (set "device" below) - less tested: not yet with a physical card
 #   "window"     = an OBS "Windowed Projector (Source)" window (when OBS owns the capture card and the Virtual Camera is
-#                  used by another app; set "window" below - the app's Video source list does it for you)
-source = "obs-camera"
+#                  used by another app; set "window" below) - less tested: not yet with a real OBS projector
+source = "stream"
 # Only for source = "device": the exact device name (the app's Video source list sets it for you).
 device = "OBS Virtual Camera"
 # Only for source = "desktop": which monitor (1 = the first).

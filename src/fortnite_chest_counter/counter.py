@@ -10,7 +10,9 @@ Developers: the same commands via `python -m fortnite_chest_counter ...`.
 
 Commands
 --------
-    python -m fortnite_chest_counter live --source obs-camera          # recommended: OBS Virtual Camera feed
+    python -m fortnite_chest_counter live --source stream --url https://www.twitch.tv/CHANNEL   # a livestream link
+    python -m fortnite_chest_counter live --source desktop --monitor 2 # a screen showing the stream / game fullscreen
+    python -m fortnite_chest_counter live --source obs-camera          # OBS Virtual Camera feed
     python -m fortnite_chest_counter live --source device --device "Elgato HD60 X"
     python -m fortnite_chest_counter live --source desktop --monitor 1 # fallback
     python -m fortnite_chest_counter video "my gameplay.mp4"           # count chests in a recording (never touches the live counter)
@@ -1006,9 +1008,10 @@ def explain_source_failure(kind, label, error_text):
                 "  - Pick the device again in the app's Video source list (Refresh lists them), or run the\n"
                 "    diagnostics to see the exact device names\n"
                 "  - Many capture cards can only be used by ONE program at a time. If OBS is already using it, "
-                "use the normal OBS Virtual Camera mode instead (recommended).")
+                "use OBS Virtual Camera (or a screen showing OBS's projector) instead.")
     if kind == "desktop":
-        return "Could not capture the screen. Try the recommended OBS Virtual Camera mode instead."
+        return ("Could not capture the screen. Pick the screen again in the Video source list (Refresh), or count the "
+                "stream from its link (Livestream URL) instead.")
     if kind == "stream":
         if "No module named streamlink" in error_text:
             return "The livestream reader (Streamlink) is missing. Extract the whole zip again."

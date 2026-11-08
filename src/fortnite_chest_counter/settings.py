@@ -63,7 +63,7 @@ DEFAULTS = {
         "dir": "captures",
     },
     "live": {
-        "source": "obs-camera",                 # obs-camera | device | desktop | file
+        "source": "stream",                     # stream | desktop | obs-camera | device | window | file
         "device": "OBS Virtual Camera",         # DirectShow device name for --source device
         "monitor": 1,                           # monitor number for --source desktop
         "window": "",                           # window title for --source window (an OBS "Windowed Projector (Source)")

@@ -3,8 +3,9 @@
 **Automatically count Fortnite chests from gameplay video.**
 
 A free, open-source Windows app that recognises the chest-opening pop-ups visible in Fortnite gameplay and keeps a running
-count - from your own stream's OBS feed (single-PC or dual-PC), a capture card, a livestream you watch, or a recorded video.
-The numbers go to a text file that an OBS Text source shows on stream, so nobody has to count by hand.
+count - from a Twitch or YouTube livestream link, anything shown on a screen, your own stream's OBS feed (single-PC or
+dual-PC), a capture card, or a recorded video. The numbers go to a text file that an OBS Text source can show on stream, so
+nobody has to count by hand.
 
 The app works entirely through video analysis, without directly interacting with Fortnite. It does not access game memory
 or files, inject code, modify the game, or simulate player inputs. It simply analyses what is already visible on screen,
@@ -17,11 +18,11 @@ without revealing hidden information or providing gameplay assistance. See
 
 > Independent, unofficial project: not affiliated with, endorsed by or approved by Epic Games. "Fortnite" is a trademark of
 > Epic Games, Inc.
-> Status: **v0.2.1 public beta** (desktop app; Livestream URL input is experimental). Developed and tested during Fortnite Chapter 7 Season 5 (November 2026) -
+> Status: **v0.2.2 public beta** (desktop app). Developed and tested during Fortnite Chapter 7 Season 5 (November 2026) -
 > see [Fortnite compatibility](#fortnite-compatibility). Windows 10 / 11. Nothing to install.
 
 **Contents:** [The two numbers](#the-two-numbers-read-this-first) · [Download](#download) · [Choose your setup](#choose-your-setup) ·
-[Quick start](#quick-start-single-pc) · [Show it on stream](#show-it-on-stream) · [Using the app](#using-the-app) ·
+[Quick start](#quick-start) · [Show it on stream](#show-it-on-stream) · [Using the app](#using-the-app) ·
 [Fair play](#fair-play-and-compatibility) · [Updating](#updating) · [Troubleshooting](#troubleshooting) ·
 [Known limitations](#known-limitations) · [Setup help from AI](#getting-setup-help-from-ai) · [How it works](#how-it-works) ·
 [Development](#development)
@@ -41,7 +42,7 @@ APPROX is an estimate, not an exact count. See [Known limitations](#known-limita
 ## Download
 
 1. Open the [**Releases** page](https://github.com/GabrielGzS/fortnite-visual-chest-counter/releases) and download the latest
-   `Fortnite-Visual-Chest-Counter-v….zip` (about 135 MB; it includes everything it needs). `SHA256SUMS.txt` lets you verify
+   `Fortnite-Visual-Chest-Counter-v….zip` (about 155 MB; it includes everything it needs). `SHA256SUMS.txt` lets you verify
    it, and `ffmpeg-source-*.tar.gz` is the source code of the bundled video helper (licence requirement).
 2. Right-click the ZIP → **Extract All**. Use a normal folder (Desktop or Documents). Do not run it from inside the ZIP or
    from Program Files.
@@ -57,36 +58,38 @@ runtime\                            program files (official python.org Python, F
 
 ## Choose your setup
 
-The app always runs on the PC with OBS that streams (or the only PC). Step-by-step guides:
+Pick what you want to count - most people need one of the first two, which need no OBS at all. Step-by-step guides:
 
-| Your setup | Guide | Tested |
+| What you want to count | Guide | Tested |
 |---|---|---|
-| A **Twitch or YouTube livestream** - paste the link, no OBS needed | [Livestream URL](docs/guides/livestream-url.md) (experimental) | **Yes** - 2026-11-08, development build |
-| Fortnite and OBS on **one PC** | [Single PC](docs/guides/obs-single-pc.md) | Yes |
+| A **Twitch or YouTube livestream** - paste the link | [Livestream URL](docs/guides/livestream-url.md) | **Yes** - incl. a 3-hour session (~500 chests), 2026-11-08 |
+| Anything **on a screen** - a stream or video playing fullscreen, or your own game | [Screen](docs/guides/screen-capture.md) | **Yes** - 2026-11-08 |
+| **Your own stream**, Fortnite and OBS on one PC | [Single PC with OBS](docs/guides/obs-single-pc.md) | Yes |
 | **Gaming PC + streaming PC** on the same network, no capture card | [Dual PC over the network (SRT)](docs/guides/obs-dual-pc-srt.md) | **Yes** - 2026-11-07, v0.2.0 |
-| **Console or gaming PC + capture card** + streaming PC | [Capture card](docs/guides/capture-card.md) | Counter side yes; not yet with a physical card |
-| Capture card **owned by OBS** and **Virtual Camera used by another program** | [OBS projector window](docs/guides/obs-projector.md) | Window capture yes; not yet with a real OBS projector |
 | A **video file** | [Recorded video](docs/guides/recorded-video.md) | Yes |
-| A livestream or video in your browser | [Single PC → watching a stream](docs/guides/obs-single-pc.md#counting-a-stream-or-video-you-are-watching) | Yes |
+| **Console or gaming PC + capture card** + streaming PC | [Capture card](docs/guides/capture-card.md) | *Less tested:* counter side yes; not yet with a physical card |
+| Capture card **owned by OBS** and **Virtual Camera used by another program** | [OBS projector window](docs/guides/obs-projector.md) | *Less tested:* window capture yes; not yet with a real OBS projector |
 
 Then [show the numbers on stream](docs/guides/obs-overlay.md) - from the text file, or instantly through OBS's built-in
 WebSocket (optional). Virtual Camera already used by another program? Read your gameplay from an
 [OBS projector window](docs/guides/obs-projector.md).
 
-## Quick start (single PC)
+## Quick start
+
+Open **`Fortnite Visual Chest Counter.exe`**, then pick the **Video source**:
 
 ```text
-1. In OBS: create a scene `ChestDetectorFeed` containing only your game (Game Capture, Ctrl+F to fill).
-2. In OBS: Virtual Camera gear -> Output Type: Scene -> ChestDetectorFeed, then click Start Virtual Camera.
-3. Open "Fortnite Visual Chest Counter.exe", keep "OBS Virtual Camera" as the video source, click Start counting.
-4. In OBS: add a Text (GDI+) source (Read from file) pointing at obs_output\chest_counter.txt
-   (the app's Overlay page shows the exact path and lets you choose what it says).
+A livestream:   Livestream URL -> paste the link (https://www.twitch.tv/CHANNEL or a YouTube live link) -> Start counting
+A screen:       play the stream, video or game FULLSCREEN -> pick that Screen -> Start counting
+Your own OBS:   in OBS make a scene `ChestDetectorFeed` with only your game, Virtual Camera gear -> Output Type: Scene ->
+                ChestDetectorFeed -> Start Virtual Camera; in the app pick "OBS Virtual Camera" -> Start counting
 ```
 
-Every click explained: [single-PC guide](docs/guides/obs-single-pc.md). Two PCs: [SRT guide](docs/guides/obs-dual-pc-srt.md).
+Want the numbers on stream? In OBS add a Text (GDI+) source (Read from file) pointing at `obs_output\chest_counter.txt` (the
+app's Overlay page shows the exact path and lets you choose what it says).
 
-`ChestDetectorFeed` must contain **clean Fortnite gameplay only** (no webcam, alerts, chat or the counter's own text) in a
-16:9 picture with the HUD visible. Your stream scene is unaffected.
+The counter needs **clean Fortnite gameplay**: 16:9, HUD visible, nothing covering the chest pop-up right of the crosshair.
+Every click explained: [setup guides](docs/guides/README.md).
 
 ## Show it on stream
 
@@ -129,9 +132,9 @@ Details and the other files: [overlay guide](docs/guides/obs-overlay.md).
 
 The counter is built for statistics and stream presentation: it counts chest openings that are **already visible on
 screen**. It gives no competitive information - it does not locate hidden chests, reveal enemies, aim, move or play for you.
-It has no connection to Fortnite: it only reads video frames (OBS Virtual Camera, a capture device, a screen capture or a
-video file), makes no internet connection, and its one keyboard shortcut (Ctrl+Alt+M, mark a missed chest) is a standard
-Windows hotkey that sends nothing to the game.
+It has no connection to Fortnite: it only reads video frames (a livestream, a screen capture, OBS Virtual Camera, a capture
+device or a video file). It connects to the internet only to fetch a public livestream you paste (Livestream URL), and its one
+keyboard shortcut (Ctrl+Alt+M, mark a missed chest) is a standard Windows hotkey that sends nothing to the game.
 
 Epic Games' rules prohibit tools that use real-time gameplay information to gain a competitive advantage. This app is
 designed for counting, not for competitive assistance - but Epic does not certify individual third-party applications, and
@@ -141,9 +144,11 @@ this one has not been reviewed or approved by Epic. The most conservative ways t
 - **run the counter on a separate streaming PC** (dual-PC setup, [over the network with SRT](docs/guides/obs-dual-pc-srt.md)
   or [with a capture card](docs/guides/capture-card.md)), so the counter and the game run on different PCs.
 
-Running the counter on the same PC as Fortnite (single-PC OBS setup) works technically, but its compatibility with
-Fortnite's anti-cheat has not been officially verified. A dual-PC setup is not a compliance guarantee either; it simply keeps
-the counter away from the game. Tournament or event rules can be stricter than normal play - check them if you compete.
+Running the counter on the same PC as Fortnite works technically. In one developer session (2026-11-08) the app analysed a
+livestream on the same PC while Fortnite was being played, and BattlEye did not interrupt the game. That is one observation,
+not a verification: the app's compatibility with Fortnite's anti-cheat has not been officially verified, and anti-cheat
+behaviour can change at any time. A dual-PC setup is not a compliance guarantee either; it simply keeps the counter away from
+the game. Tournament or event rules can be stricter than normal play - check them if you compete.
 
 ## Updating
 
@@ -159,7 +164,8 @@ replace files; opening the app writes your real numbers back into the OBS text f
 | Symptom | Fix |
 |---|---|
 | `OBS Virtual Camera was not found` | Open OBS Studio 28+, click **Start Virtual Camera**, click **Start counting** again. |
-| Number never changes | Turn on **Live preview**: 16:9, full screen, HUD visible? Does the chest pop-up ("CHEST" / "BAÚ") appear in `ChestDetectorFeed`? |
+| Number never changes | Turn on **Live preview**: 16:9, full screen, HUD visible? Does the chest pop-up ("CHEST" / "BAÚ") appear? Screen source: the stream must play **fullscreen** - a small player inside a web page is too small. |
+| Livestream URL: "Buffering" / video in bursts | Normal for a live stream; the counter catches up and keeps counting. Keep **Stream stability: Maximum stability** for long sessions. |
 | SRT picture black on the streaming PC | Address, port, Media Source settings and Windows Firewall: [SRT troubleshooting](docs/guides/obs-dual-pc-srt.md#troubleshooting). |
 | OBS text blank / not updating | The Text source must have **Read from file** ticked and point at the file shown on the Overlay page. |
 | Anything else | Help & diagnostics → **Run diagnostics** → **Copy report**; include any `logs\crash_*.txt` in an [issue](https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues). |
@@ -168,7 +174,7 @@ More: [full troubleshooting guide](docs/guides/troubleshooting.md).
 
 ## Fortnite compatibility
 
-The chest detection in v0.2.0 is the one developed and live-tested during **Fortnite Chapter 7 Season 5** (November 2026);
+The chest detection in v0.2.2 was developed and live-tested during **Fortnite Chapter 7 Season 5** (November 2026);
 its automated tests also use recordings of earlier gameplay. It recognises Fortnite's on-screen chest pop-up and HUD
 elements, which Epic Games can change in any update. If chests stop being counted after an update, please
 [open an issue](https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues) with the diagnostics report and, if you
@@ -177,20 +183,26 @@ can, a diagnostic capture.
 ## Known limitations
 
 - **APPROX is an estimate** and can be slightly high or low. CERTAIN is the conservative number.
-- **Language-specific:** chest detection reads the word in the pop-up: English (CHEST) and Portuguese (Brazil) (BAÚ) only.
-  Special chests whose pop-up says something else (e.g. Sprite Chests) are not counted as chests yet.
-- **HUD layout/scale:** assumes a 16:9 picture with the HUD in its usual place. A HUD drawn larger (up to about 1.3x) is
-  recognised for **English** pop-ups only, and those chests count in **APPROX only**, never CERTAIN. A smaller, moved or
-  hidden HUD, Portuguese pop-ups on a larger HUD, and 4:3 / vertical video will not work well.
-- **Back-to-back chests on a larger-HUD stream** (the second opened while the first pop-up is still showing) can count
-  as one - never as two for one chest.
+- **Language-specific:** chest detection reads the word in the pop-up: English (CHEST, incl. RARE CHEST and SPRITE CHEST)
+  and Portuguese (Brazil) (BAÚ) only. Chest **types** (normal / rare / sprite) are read for English pop-ups only and are
+  shown as "unknown type" when the line cannot be read reliably; types are a label, never a count.
+- **HUD layout/scale:** assumes a 16:9 picture with the HUD in its usual place. For **English** pop-ups a HUD drawn larger
+  (up to about 1.3x) or smaller (about 0.8x, tested on one stream) is recognised; those chests count in **APPROX only**,
+  never CERTAIN. Other HUD sizes, a moved or hidden HUD, Portuguese pop-ups on a non-standard HUD, and 4:3 / vertical
+  video will not work well.
+- **Chests opened in quick succession** are ADDED to the pop-up on screen ("RARE CHEST X2", "X3", another "... CHEST"
+  line). v0.2.2 counts those steps (multiplier steps in APPROX only); two chests within a fraction of a second can count as
+  one - never as two for one chest. Portuguese stacked pop-ups are not tested.
+- **Livestream URL:** video arrives as viewers get it - in bursts, with buffering, ad breaks and reconnects; footage the
+  platform never delivered cannot be counted (the app says when that happens).
+- **Screen source:** the gameplay must fill the screen; a small player inside a web page is not counted.
 - **Clean gameplay feed recommended:** overlays on top of the HUD can hide the clues.
 - **Audio is not used**; only the picture is analysed.
 - **No per-match statistics yet:** the counter keeps one running total. Match tracking is planned
   ([roadmap](docs/ROADMAP.md)).
-- Tested on a limited set of recordings (PC English, PS5 Portuguese, their stream-compressed versions, three diagnostic
-  recordings of streams with a larger HUD), live sessions and one dual-PC SRT setup. Physical capture cards are untested.
-  Windows only.
+- Tested on a limited set of recordings (PC English, PS5 Portuguese, their stream-compressed versions, diagnostic
+  recordings of streams with a larger and a smaller HUD, 11 labelled real-world cases), live sessions (incl. a 3-hour
+  livestream) and one dual-PC SRT setup. Physical capture cards and real OBS projectors are untested. Windows only.
 
 ## Getting setup help from AI
 
@@ -201,10 +213,17 @@ Facts for assistants (please do not contradict these):
 
 - The app is **`Fortnite Visual Chest Counter.exe`** in the extracted ZIP folder. It is the only thing the user opens.
   **Python is not required.** There are no `.bat` files any more (v0.1.x had them; v0.2.0 users can delete leftovers).
-- The recommended input is **OBS Virtual Camera**, fed by a scene named `ChestDetectorFeed`, chosen in the app's
-  **Video source** list (the default). Virtual Camera settings (gear): Output Type **Scene** → **ChestDetectorFeed**.
-  Other list entries: capture devices by name and screens ("Screen 2 · 1920 x 1080").
-- `ChestDetectorFeed` must contain **clean Fortnite gameplay only**: no webcam, alerts, chat, or the counter's own text.
+- Inputs, in the app's **Video source** list from most to least used: **Livestream URL** (paste a Twitch / YouTube link;
+  the default for new installs), **screens** ("Screen 2 · 1920 x 1080" - the stream or game must play fullscreen),
+  **OBS Virtual Camera** (for a streamer's own OBS scene named `ChestDetectorFeed`; Virtual Camera gear: Output Type
+  **Scene** → **ChestDetectorFeed**), then capture devices and OBS projector windows (marked "less tested"). None of them is
+  "the" recommended one: pick by setup.
+- **Profiles** (Dashboard, above the numbers): one per person counted; each keeps its own counts, video source and chest-type
+  split; one profile counts at a time; OBS shows the selected one.
+- **Chest types** (line under the numbers): the APPROX total split into Chest / Rare chest / Sprite chest / unknown type /
+  not classified. A label only: it never changes the two counts, and OBS shows only the totals.
+- For OBS setups, `ChestDetectorFeed` must contain **clean Fortnite gameplay only**: no webcam, alerts, chat, or the
+  counter's own text.
 - Single-PC users capture Fortnite with OBS **Game Capture** (or Display Capture if Game Capture is black).
 - Dual-PC users run the app on the **streaming PC** only; **nothing** from this project runs on the gaming PC or console.
   The gameplay reaches `ChestDetectorFeed` on the streaming PC in one of two ways:
@@ -227,16 +246,17 @@ Facts for assistants (please do not contradict these):
 - Count a recorded video: Dashboard → **Analyse a recording...** (never changes the live counter; results in `video_output\`).
 - Supported Fortnite languages: English and Portuguese (Brazil); Settings → **Fortnite language** (English / Portuguese
   (Brazil) / Both; "Both" is not automatic detection). Picture must be 16:9 with the HUD visible. A HUD drawn up to
-  about 1.3x larger is recognised for English pop-ups; those chests count in APPROX only.
+  about 1.3x larger or about 0.8x smaller is recognised for English pop-ups; those chests count in APPROX only.
 - There are no per-match statistics yet (one running total); they are planned, not available.
 - Problems: Help & diagnostics → **Run diagnostics** → **Copy report**. Missed chests: Dashboard → **Diagnostic recording** →
   "Only around my marks", then press **Ctrl+Alt+M** right after each miss.
 - Advanced settings live in `config.toml` next to the app (Settings → Open config.toml); a wrong value only shows a warning
   and uses the default. Every command also works from a terminal: `runtime\python\python.exe -m fortnite_chest_counter --help`.
-- The app only analyses video pixels; it never connects to Fortnite or the internet. It is **not** approved by Epic Games:
-  never call it "ban-safe". Most conservative setups: counting recorded video, or the counter on a separate streaming PC.
-  Same-PC use works but its anti-cheat compatibility is not officially verified (see Fair play and compatibility).
-- v0.2.0's detection was developed and tested during Fortnite Chapter 7 Season 5 (November 2026). A later Fortnite update can
+- The app only analyses video pixels; it never connects to Fortnite, and it uses the internet only to fetch a pasted
+  livestream. It is **not** approved by Epic Games: never call it "ban-safe" or "BattlEye safe" (one developer session ran
+  it next to Fortnite without a BattlEye interruption - one observation, not a guarantee). Most conservative setups:
+  counting recorded video, or the counter on a separate PC.
+- v0.2.2's detection was developed and tested during Fortnite Chapter 7 Season 5 (November 2026). A later Fortnite update can
   change the HUD cues it relies on; then the user should open an issue: https://github.com/GabrielGzS/fortnite-visual-chest-counter/issues
 
 ## How it works

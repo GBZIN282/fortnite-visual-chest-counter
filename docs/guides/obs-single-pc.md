@@ -48,7 +48,8 @@ Add one OBS Text source that reads `obs_output\chest_counter.txt`: [OBS overlay 
 ## Counting a stream or video you are watching
 
 The counter only needs the picture, so it can also count chests in someone else's livestream or a video playing in your
-browser:
+browser. Easiest, without OBS: paste the stream's link ([Livestream URL](livestream-url.md)) or play it fullscreen and pick
+that [screen](screen-capture.md). Through OBS:
 
 - In `ChestDetectorFeed`, use **Display Capture** with the video playing full screen, or **Window Capture** of the browser
   cropped to just the video (hold `Alt` while dragging the source's edges).

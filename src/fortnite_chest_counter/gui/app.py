@@ -765,8 +765,8 @@ class Dashboard(QWidget):
     def __init__(self, win):
         super().__init__()
         self.win = win
-        layout = page_layout(self, "Dashboard", "Counts the chests in your gameplay video and writes the numbers to a "
-                                                "text file that OBS shows on stream.")
+        layout = page_layout(self, "Dashboard", "Counts the chests in Fortnite video - a livestream, a screen or OBS - "
+                                                "and keeps the numbers (also in a text file OBS can show on stream).")
         header = layout.itemAt(0).widget()
         layout.removeWidget(header)
         top = QHBoxLayout()
@@ -881,14 +881,15 @@ class Dashboard(QWidget):
         self.stability.currentIndexChanged.connect(lambda _: self.stability_hint.setText(
             next(text for key, _, text in settings.STREAM_STABILITY_CHOICES if key == self.stability.currentData())
             + " A bigger buffer cannot bring back video the platform never delivered (outages, ad breaks)."))
-        url_layout.addWidget(label("EXPERIMENTAL. Counts from the public stream as viewers get it (a few seconds behind), at "
-                                   "720p - no OBS, capture card or browser needed. Twitch and YouTube tested; the stream must "
-                                   "be live and public. If the connection drops, the app reconnects by itself, keeps your "
-                                   "counts and tells you which part could not be seen.", "hint", wrap=True))
+        url_layout.addWidget(label("Counts from the public stream as viewers get it, a few seconds behind, at 720p - no OBS "
+                                   "or browser needed. Twitch and YouTube; the stream must be live and public. Video can "
+                                   "arrive in bursts or pause to buffer. If the connection drops, the app reconnects by itself, "
+                                   "keeps your counts and tells you which part could not be seen.", "hint", wrap=True))
         self.url_row.hide()
         box_layout.addWidget(self.url_row)
         self.source.currentIndexChanged.connect(lambda _: self.url_row.setVisible(
             (self.source.currentData() or {}).get("source") == "stream"))
+        self.source.currentIndexChanged.connect(lambda _: win.update_source_hint())
         self.source_hint = label("", "hint", wrap=True)
         box_layout.addWidget(self.source_hint)
         box_layout.addWidget(hline())
@@ -1411,13 +1412,15 @@ class HelpPage(QWidget):
         super().__init__()
         self.win = win
         layout = page_layout(self, "Help & diagnostics", None)
-        box, box_layout = card("Set up OBS in two minutes")
+        box, box_layout = card("Start counting in a minute")
         steps = [
-            "1.  In OBS, make a scene that shows only your gameplay (no webcam or alerts) and click Start Virtual Camera.",
-            "2.  Here, pick \"OBS Virtual Camera\" as the video source and click Start counting.",
-            "3.  In your stream scene, add a Text (GDI+) source with \"Read from file\" pointing to the file shown on the "
-            "Overlay page.",
-            "Capture card or second PC? The guide explains every setup.",
+            "Someone's live stream:  Video source  >  Livestream URL, paste the link (Twitch or YouTube), Start counting.",
+            "A stream, video or game on a screen:  play it FULLSCREEN, pick that Screen as the video source, Start counting.",
+            "Your own stream with OBS:  make a scene with only your gameplay, click Start Virtual Camera in OBS, pick "
+            "\"OBS Virtual Camera\" here, Start counting.",
+            "Show the numbers on stream:  in OBS add a Text (GDI+) source with \"Read from file\" pointing to the file shown "
+            "on the Overlay page.",
+            "Second PC, capture card or a recorded video? The guide explains every setup.",
         ]
         for step in steps:
             box_layout.addWidget(label(step, wrap=True))
@@ -1654,8 +1657,12 @@ class MainWindow(QMainWindow):
 
     def _fill_sources(self, devices, monitors, windows=()):
         live = self.profile_live()
-        items = [("OBS Virtual Camera   (recommended)", {"source": "obs-camera"}),
-                 ("Livestream URL   (Twitch / YouTube, no OBS needed)   - EXPERIMENTAL", {"source": "stream"})]
+        # Most used first (v0.2.2): a livestream link and a screen need no setup; OBS for streamers' own scene; then the
+        # less tested inputs. (The order is only presentation: every entry stays fully supported.)
+        items = [("Livestream URL   (Twitch / YouTube - paste the link)", {"source": "stream"})]
+        for i, (_, _, w, h) in enumerate(monitors, 1):
+            items.append((f"Screen {i}   ·   {w} x {h}", {"source": "desktop", "monitor": i}))
+        items.append(("OBS Virtual Camera", {"source": "obs-camera"}))
         if not self.dashboard.url.text():
             self.dashboard.url.setText(live["url"])
             stab = self.dashboard.stability
@@ -1666,16 +1673,14 @@ class MainWindow(QMainWindow):
             names.append(live["device"])
         for name in names:
             missing = "" if name in devices else "   (not found right now)"
-            items.append((f"Capture device:  {name}{missing}", {"source": "device", "device": name}))
+            items.append((f"Capture device:  {name}{missing}   · less tested", {"source": "device", "device": name}))
         titles = [title for title, _ in windows]
         for title, minimized in windows:
-            items.append((f"OBS projector:  {title}" + ("   (minimized - restore it)" if minimized else ""),
+            items.append((f"OBS projector:  {title}" + ("   (minimized - restore it)" if minimized else "") + "   · less tested",
                           {"source": "window", "window": title}))
         if live["source"] == "window" and live["window"] and live["window"] not in titles:
-            items.append((f"OBS projector:  {live['window']}   (not open right now)",
+            items.append((f"OBS projector:  {live['window']}   (not open right now)   · less tested",
                           {"source": "window", "window": live["window"]}))
-        for i, (_, _, w, h) in enumerate(monitors, 1):
-            items.append((f"Screen {i}   ·   {w} x {h}", {"source": "desktop", "monitor": i}))
         dev_video = os.environ.get("FCC_DEV_VIDEO")
         if dev_video:
             items.append((f"Test video (real time):  {Path(dev_video).name}", {"source": "file", "video": dev_video}))
@@ -1694,16 +1699,31 @@ class MainWindow(QMainWindow):
         self.dashboard.source.setCurrentIndex(index)
         self.dashboard.source.blockSignals(False)
         self.dashboard.url_row.setVisible((self.dashboard.source.currentData() or {}).get("source") == "stream")
-        obs = "OBS Virtual Camera" in devices
-        projector_tip = ("" if windows else " Virtual Camera busy or the capture card used by OBS? In OBS, right-click "
-                         "your gameplay source > Windowed Projector (Source), then click Refresh.")
-        self.dashboard.source_hint.setText(
-            "" if obs or not devices else
-            "OBS Virtual Camera was not found: open OBS Studio (28 or newer) and click Start Virtual Camera." + projector_tip)
-        if not devices and not obs:
-            self.dashboard.source_hint.setText("No video devices found. For the recommended setup, open OBS Studio and "
-                                               "click Start Virtual Camera, then click Refresh." + projector_tip)
+        self._obs_camera_found = "OBS Virtual Camera" in devices
+        self._projectors_found = bool(windows)
+        self.update_source_hint()
         self.dashboard.refresh.setEnabled(True)
+
+    def update_source_hint(self):
+        """One short line for the selected source: what it needs (and, for the less tested ones, that they are)."""
+        kind = (self.dashboard.source.currentData() or {}).get("source")
+        found = getattr(self, "_obs_camera_found", True)
+        text = {
+            "stream": "",
+            "desktop": "Counts what is on that screen: play the stream (or the game) FULLSCREEN there. A small player inside "
+                       "a web page is too small to read.",
+            "obs-camera": "For your own OBS scene with the gameplay: click Start Virtual Camera in OBS." if found else
+                          "OBS Virtual Camera was not found: open OBS Studio (28 or newer), click Start Virtual Camera, then "
+                          "Refresh.",
+            "device": "Reads the device directly. Less tested: not yet with a physical capture card. Most cards work with one "
+                      "program at a time - if OBS uses it, pick OBS Virtual Camera instead.",
+            "window": "Reads an OBS projector window (keep it open, not minimized). Less tested: not yet with a real OBS "
+                      "projector.",
+        }.get(kind, "")
+        if kind == "obs-camera" and not getattr(self, "_projectors_found", True):
+            text += (" Virtual Camera busy, or the capture card used by OBS? In OBS right-click your gameplay source > "
+                     "Windowed Projector (Source), then click Refresh.")
+        self.dashboard.source_hint.setText(text)
 
     def select_source(self, wanted):
         """Select the source list entry that matches `wanted` (a [live]-style dict). -> True if one was found."""

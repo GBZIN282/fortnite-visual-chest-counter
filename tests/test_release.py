@@ -453,7 +453,7 @@ def test_missing_obs_camera_gives_friendly_message_not_a_traceback():
     paths.ffmpeg_executable = lambda: "ffmpeg"
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            code, text = run_main(["live"] + args_for(tmp))
+            code, text = run_main(["live", "--source", "obs-camera"] + args_for(tmp))
     finally:
         sources.make_source, sources.list_video_devices, paths.ffmpeg_executable = real_make, real_list, real_ff
     assert code == 1
@@ -469,7 +469,7 @@ def test_camera_present_but_not_started_gives_different_message():
     paths.ffmpeg_executable = lambda: "ffmpeg"
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            code, text = run_main(["live"] + args_for(tmp))
+            code, text = run_main(["live", "--source", "obs-camera"] + args_for(tmp))
     finally:
         sources.make_source, sources.list_video_devices, paths.ffmpeg_executable = real_make, real_list, real_ff
     assert code == 1 and "not sending video" in text and "Traceback" not in text

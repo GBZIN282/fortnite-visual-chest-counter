@@ -1,13 +1,17 @@
-# Count from a Twitch or YouTube livestream URL (experimental)
+# Count from a Twitch or YouTube livestream URL
 
 Paste the link of a live stream and press **Start counting** - no OBS, no capture card, no Virtual Camera, no browser.
 The counter watches the public stream the way viewers get it, a few seconds behind. Your own OBS setup stays exactly as
 it is; the counter can even run on another PC.
 
-> **Tested (2026-11-08, development build):** a live Fortnite stream simulcast on Twitch and YouTube - 1280x720 at 60 fps
-> in, 15 pictures analysed per second, nothing dropped; both platforms counted the same chests, and every counted chest
-> checked was a real "CHEST" pop-up. Not yet measured: how many chests a stream makes it miss, ad breaks, multi-hour
-> sessions, flaky connections.
+> **Tested (2026-11-08):** a live Fortnite stream simulcast on Twitch and YouTube - 1280x720 at 60 fps in, 15 pictures
+> analysed per second, nothing dropped; both platforms counted the same chests, and every counted chest checked was a real
+> "CHEST" pop-up. A **3-hour session** on one streamer (v0.2.1) counted about 500 chests; video arrived in bursts at times,
+> without disturbing the session. Not yet measured: exactly how many chests a stream makes it miss (the 3-hour count was
+> not checked chest by chest), ad breaks, flaky connections.
+>
+> Good to know: the counter sees what viewers get - bursts, buffering, ad breaks and stream restarts included. It reconnects
+> by itself and keeps your counts; video the platform never delivered cannot be counted (the app tells you when).
 
 ## Use it
 

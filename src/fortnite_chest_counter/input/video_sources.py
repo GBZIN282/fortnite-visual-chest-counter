@@ -9,7 +9,7 @@ frame. No new Python dependency, no frames written to disk.
 
 Backends (all passive pixel capture: nothing touches Fortnite, nothing runs on the gaming PC):
 
-  obs-camera  OBS Virtual Camera (DirectShow). RECOMMENDED for single-PC and dual-PC setups:
+  obs-camera  OBS Virtual Camera (DirectShow). For streamers' own OBS scene, single-PC or dual-PC (SRT):
               OBS shows a clean gameplay-only scene ("ChestDetectorFeed") as a virtual webcam.
   device      any DirectShow video device by name, e.g. a capture card opened directly. Advanced:
               some card drivers refuse a second reader while OBS holds the device.
