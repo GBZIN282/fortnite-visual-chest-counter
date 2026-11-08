@@ -1,5 +1,12 @@
 ## Fortnite Visual Chest Counter v0.2.1 — Public Beta
 
+> ⚠️ **Important — Fortnite HUD scale.** For the best chest detection, use a **normal or medium-sized Fortnite HUD**
+> (Fortnite's HUD Scale setting) and avoid very small HUD scales. The counter currently works best with HUD sizes like
+> the ones used during development and testing; a smaller HUD makes the chest XP pop-ups smaller (and can move them),
+> which can cause missed chests. Support for more HUD scales is planned for **v0.2.2**.
+> This also applies to **Livestream URL** counting (Twitch / YouTube, experimental): accuracy depends on the streamer's
+> HUD settings.
+
 ### ⬇️ [Download for Windows: Fortnite-Visual-Chest-Counter-v0.2.1.zip](https://github.com/GabrielGzS/fortnite-visual-chest-counter/releases/download/v0.2.1/Fortnite-Visual-Chest-Counter-v0.2.1.zip) (156 MB)
 
 Windows 10 / 11 · nothing to install · extract the zip and open **`Fortnite Visual Chest Counter.exe`**
