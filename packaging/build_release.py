@@ -47,6 +47,12 @@ PACKAGE = "fortnite_chest_counter"
 TEMPLATE_FILES = ["chest/en/chest.npy", "chest/pt/bau.npy", "container_opened.npy", "ui/interaction_disc.npy",
                   "ui/interaction_ring.npy"]                    # audio_fingerprint.npy is development-only
 THIRD_PARTY = ["numpy", "scipy"]
+# Livestream URL input (v0.2.1): Streamlink and its complete dependency closure on Windows / Python 3.13 (BSD / MIT /
+# Apache-2.0, pycountry LGPL-2.1, certifi MPL-2.0). Verified against the wheel RECORD hashes like numpy; their licence
+# files go to runtime/licenses/. Binaries among them (lxml, pycryptodome, cffi, charset-normalizer) are not Authenticode-signed.
+STREAM_PACKAGES = ["streamlink", "attrs", "certifi", "cffi", "charset-normalizer", "h11", "idna", "isodate", "lxml",
+                   "outcome", "pycountry", "pycparser", "pycryptodome", "PySocks", "requests", "sniffio", "sortedcontainers",
+                   "trio", "trio-websocket", "urllib3", "websocket-client", "wsproto"]
 # The window toolkit: only what QtCore + QtGui + QtWidgets + the Windows platform plugin load (their PE import closure;
 # the C/C++ runtime vcruntime140*.dll comes from runtime\python, which ships a newer one than PySide6).
 QT_FILES = {
@@ -246,7 +252,7 @@ def build(out, python_embed, ffmpeg_zip, ffmpeg_source, mingw=None):
         dst = lib / PACKAGE / "templates" / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "src" / PACKAGE / "templates" / rel, dst)
-    for dist in THIRD_PARTY:
+    for dist in THIRD_PARTY + STREAM_PACKAGES:
         d, base, checked = verify_record(dist)
         # the package's own folders only (RECORD also lists helper scripts outside site-packages, e.g. ../../Scripts/f2py.exe)
         tops = sorted({Path(f).parts[0] for f in d.files if not str(f).endswith(".pyc") and Path(f).parts[0] != ".."})
@@ -316,6 +322,13 @@ def build(out, python_embed, ffmpeg_zip, ffmpeg_source, mingw=None):
         if not files:
             raise SystemExit(f"missing licence text for {dist}")
         shutil.copy2(d.locate_file(files[0]), lic / name)
+    for dist in STREAM_PACKAGES:
+        d = md.distribution(dist)
+        files = [f for f in d.files if re.search(r"dist-info/(licenses/.+|LICEN[CS]E[^/]*|COPYING[^/]*|NOTICE[^/]*)$", str(f))]
+        if not files:
+            raise SystemExit(f"missing licence text for {dist}")
+        for f in files:
+            shutil.copy2(d.locate_file(f), lic / f"{d.metadata['Name']}-{Path(str(f)).name}")
     qt_version = md.version("PySide6_Essentials")
     (lic / "Qt-NOTICE.txt").write_text((ROOT / "packaging" / "QT-NOTICE.txt").read_text(encoding="utf-8")
                                        .replace("{version}", qt_version), encoding="utf-8")

@@ -26,8 +26,9 @@ src/fortnite_chest_counter/
   templates/        runtime detector templates (.npy) - tracked in Git, REQUIRED at runtime
 packaging/          build_release.py (embeddable Python + verified numpy/scipy/PySide6 + bundled ffmpeg + launcher + zip),
                     launcher/ (launcher.c, manifest, app.ico), make_icon.py, README.html, notices, licenses/ (LGPL/GPL texts)
-tests/              test_basics.py, test_release.py, test_app.py, test_obs.py (no video or Qt needed; one app test uses
-                    samples/ if present; test_obs.py runs a fake OBS WebSocket server in-process)
+tests/              test_basics.py, test_release.py, test_app.py, test_obs.py, test_stream.py (no video or Qt needed; one app
+                    test uses samples/ if present; test_obs.py runs a fake OBS WebSocket server, test_stream.py a fake
+                    Streamlink, both in-process / local)
 research/           offline experiment scripts (not shipped)
 docs/               this file + the research log
 samples/            LOCAL ONLY, git-ignored: recordings used for regression (~680 MB)
@@ -41,7 +42,7 @@ python -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"      # numpy, scipy, PySide6-Essentials (+ pytest, pefile, pillow, research libs)
 .venv\Scripts\python -m fortnite_chest_counter --version
 .venv\Scripts\python -m fortnite_chest_counter.gui                 # the desktop app from source
-.venv\Scripts\python tests\test_basics.py ; .venv\Scripts\python tests\test_release.py ; .venv\Scripts\python tests\test_app.py ; .venv\Scripts\python tests\test_obs.py
+.venv\Scripts\python tests\test_basics.py ; .venv\Scripts\python tests\test_release.py ; .venv\Scripts\python tests\test_app.py ; .venv\Scripts\python tests\test_obs.py ; .venv\Scripts\python tests\test_stream.py
 ```
 
 Developer switches for the app: `FCC_HOME=<folder>` keeps config/state/logs out of the checkout; `FCC_DEV_VIDEO=<file.mp4>`

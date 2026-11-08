@@ -61,6 +61,7 @@ The app always runs on the PC with OBS that streams (or the only PC). Step-by-st
 
 | Your setup | Guide | Tested |
 |---|---|---|
+| A **Twitch or YouTube livestream** - paste the link, no OBS needed | [Livestream URL](docs/guides/livestream-url.md) (experimental) | **Yes** - 2026-11-08, development build |
 | Fortnite and OBS on **one PC** | [Single PC](docs/guides/obs-single-pc.md) | Yes |
 | **Gaming PC + streaming PC** on the same network, no capture card | [Dual PC over the network (SRT)](docs/guides/obs-dual-pc-srt.md) | **Yes** - 2026-11-07, v0.2.0 |
 | **Console or gaming PC + capture card** + streaming PC | [Capture card](docs/guides/capture-card.md) | Counter side yes; not yet with a physical card |

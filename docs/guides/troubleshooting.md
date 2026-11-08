@@ -19,6 +19,8 @@ Setup-specific problems: [dual-PC SRT](obs-dual-pc-srt.md#troubleshooting) · [c
 | `the projector window was closed, so counting stopped` | Reopen it in OBS and press **Start counting**. |
 | `Could not open the video device` | The card is probably in use by OBS: close OBS or remove the card from it - or use the Virtual Camera or a projector. |
 | `already running` / `already open` | Only one counter runs at a time; use the open one (taskbar). |
+| `Could not open the livestream` | The stream must be live and public. Use the full link (`https://www.twitch.tv/CHANNEL`, a YouTube `watch?v=` link or `https://www.youtube.com/@CHANNEL/live`). |
+| Livestream: *buffering* / *reconnecting* | Slow connection, an ad break or the stream restarted. The counter waits and continues by itself; counts are kept. |
 
 ## The picture is there, but counting looks wrong
 

@@ -67,6 +67,8 @@ DEFAULTS = {
         "device": "OBS Virtual Camera",         # DirectShow device name for --source device
         "monitor": 1,                           # monitor number for --source desktop
         "window": "",                           # window title for --source window (an OBS "Windowed Projector (Source)")
+        "url": "",                              # livestream URL for --source stream (Twitch / YouTube)
+        "stream_quality": "720p",               # --source stream: 720p (recommended) | 1080p | 480p
         "status_interval_seconds": 5,
     },
     "obs_websocket": {
@@ -82,7 +84,8 @@ DEFAULTS = {
 }
 
 _TIERS = ("CERTAIN", "HIGH")
-_SOURCES = ("obs-camera", "device", "desktop", "window", "file")
+_SOURCES = ("obs-camera", "device", "desktop", "window", "stream", "file")
+STREAM_QUALITIES = ("720p", "1080p", "480p")
 SHOW_MODES = ("both", "certain", "approx")
 BOTH_LAYOUTS = ("stacked", "inline")
 VERBOSITY_LEVELS = ("minimal", "normal", "debug")
@@ -144,8 +147,10 @@ def _check(section, key, value):
         return (isinstance(value, bool), "must be true or false")
     if key == "process_fps":
         return (isinstance(value, int) and not isinstance(value, bool) and 5 <= value <= 30, "must be a whole number from 5 to 30")
-    if section == "live" and key == "window":
+    if section == "live" and key in ("window", "url"):
         return (isinstance(value, str), "must be text in quotes")
+    if section == "live" and key == "stream_quality":
+        return (value in STREAM_QUALITIES, f"must be one of {list(STREAM_QUALITIES)}")
     if section == "obs_websocket":
         if key == "port":
             return (isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535,

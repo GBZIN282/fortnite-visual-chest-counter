@@ -58,7 +58,7 @@ recognition but turning detections into gameplay statistics:
 | Version | Milestone |
 |---|---|
 | v0.2.0 | Automatic chest counting and a usable desktop app (released) |
-| v0.2.1 | OBS compatibility: WebSocket overlay output, OBS projector input, analysis-rate presets (in development) |
+| v0.2.1 | Livestream URL input (Twitch / YouTube, no OBS) + OBS compatibility: WebSocket overlay output, OBS projector input, analysis-rate presets (in development) |
 | **v0.3.0** | **Match Tracking & Statistics Foundation** - the backend that makes statistics possible |
 | **v0.4.0** | **Statistics & Performance Analytics** - records, history and trends on top of v0.3.0 |
 
@@ -76,6 +76,10 @@ Driven by a real streamer setup: capture card owned by OBS, OBS Virtual Camera u
 - **OBS projector input** (`source = "window"`): an OBS "Windowed Projector (Source)" captured with Windows Graphics
   Capture (FFmpeg `gfxcapture`, already in the bundled FFmpeg). Letterbox bars are cut, a minimized or closed window is
   reported. Tested with a stand-in window; a real OBS projector + capture card test is still open.
+- **Livestream URL input** (`source = "stream"`, flagship): Twitch / YouTube read with Streamlink -> FFmpeg -> the
+  unchanged detector. Every picture analysed in order (the platforms deliver bursts of several seconds), bounded by
+  backpressure; stream-time timestamps; reconnect with backoff at the live edge (no double counting). Adds Streamlink and
+  21 dependencies to the zip (+21 MB, +63 unsigned binaries). Open: recall on labelled stream footage, ads, hours-long runs.
 - **Analysis-rate presets** in Settings: 15 (Recommended), 10 (Balanced), 5 (Performance), with measured trade-offs.
 - **Deferred:** OBS WebSocket screenshots as a video input (`GetSourceScreenshot`): OBS renders, synchronously copies back
   and compresses every analysed picture; only worth offering after a measurement on a live stream (OBS `GetStats`:

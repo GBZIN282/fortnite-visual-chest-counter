@@ -2,16 +2,29 @@
 
 Windows 10 / 11 · nothing to install · extract the zip and open **`Fortnite Visual Chest Counter.exe`**
 
-**An OBS compatibility update.** Fits setups where everything is already in use: the capture card belongs to OBS and the
-Virtual Camera belongs to another program. Chest detection is unchanged.
+**Count chests from a Twitch or YouTube livestream link - no OBS, no capture card, no browser.** Plus OBS compatibility
+for setups where everything is already in use. Chest detection is unchanged.
 
 ### What's new at a glance
 
 | New in v0.2.1 | Why it matters |
 |---|---|
+| **Livestream URL** (experimental) | Paste a Twitch or YouTube live link and press Start: the counter reads the public stream directly |
 | **OBS projector input** | Count from an OBS "Windowed Projector (Source)" of your gameplay - no Virtual Camera, no second opening of the capture card, no plugin |
 | **OBS WebSocket overlay (optional)** | The numbers go straight into your OBS Text source: instant updates, no file path. The text file is still written |
 | **Pictures analysed per second** | Choose 15 (Recommended), 10 (Balanced) or 5 (Performance) in Settings, with the measured trade-off shown |
+
+### Livestream URL (Twitch / YouTube) - experimental
+
+**Video source** > **Livestream URL**, paste `https://www.twitch.tv/CHANNEL` or a YouTube live link, **Start counting**.
+The counter reads the stream as viewers get it (a few seconds behind) and analyses every picture in order, so nothing is
+skipped when the platform delivers video in bursts. If the connection drops, the app reconnects by itself, keeps your
+counts, and says so clearly - red *Reconnecting* in the status, the Activity log and over the Live preview - plus how many
+seconds of the stream could not be seen (chests in that part are missing from the count). Guide:
+[Livestream URL](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/livestream-url.md).
+
+*Tested on a live Fortnite stream simulcast on Twitch and YouTube: both counted the same chests, and every counted chest
+checked was a real pop-up. How many chests a compressed stream makes it miss is not measured yet.*
 
 ### OBS projector input
 

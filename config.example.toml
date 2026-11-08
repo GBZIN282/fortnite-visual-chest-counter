@@ -116,6 +116,7 @@ dir = "captures"
 #   "obs-camera" = OBS Virtual Camera (recommended; single PC and dual PC)
 #   "device"     = a capture card opened directly (advanced; set "device" below)
 #   "desktop"    = capture a monitor (fallback, easily disturbed by other windows)
+#   "stream"     = a Twitch / YouTube livestream URL (set "url" below) - no OBS needed
 #   "window"     = an OBS "Windowed Projector (Source)" window (when OBS owns the capture card and the Virtual Camera is
 #                  used by another app; set "window" below - the app's Video source list does it for you)
 source = "obs-camera"
@@ -126,6 +127,10 @@ monitor = 1
 # Only for source = "window": the projector window's exact title, e.g. "Windowed Projector (Source) - Capture Card".
 # Keep that window open (it may be behind other windows, but not minimized).
 window = ""
+# Only for source = "stream": the live stream's link, e.g. "https://www.twitch.tv/CHANNEL" or a YouTube watch?v= link.
+url = ""
+# Only for source = "stream": "720p" (recommended), "1080p" (about 4x the decoding CPU) or "480p" (not recommended).
+stream_quality = "720p"
 # How often the status line is printed, in seconds.
 status_interval_seconds = 5
 

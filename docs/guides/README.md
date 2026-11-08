@@ -5,6 +5,7 @@ text file that an OBS Text source shows on stream. Pick the guide for how Fortni
 
 | Your setup | Guide | Tested |
 |---|---|---|
+| **A Twitch or YouTube livestream** (yours or anyone's) - no OBS needed | [Livestream URL](livestream-url.md) (experimental) | **Yes** - 2026-11-08, development build |
 | Fortnite and OBS on one PC | [Single PC](obs-single-pc.md) | Yes |
 | Gaming PC + streaming PC on the same network, **no capture card** | [Dual PC over the network (SRT)](obs-dual-pc-srt.md) | **Yes** - 2026-11-07, v0.2.0 |
 | Console or gaming PC + capture card + streaming PC | [Capture card](capture-card.md) | Counter side yes; not yet with a physical card |

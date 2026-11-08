@@ -235,6 +235,13 @@ def show_error(parent, text):
 
 VERDICT = {"certain": ("CHEST +1", theme.CERTAIN), "approx": ("CHEST ~+1", theme.APPROX),
            "rejected": ("not counted", theme.REJECT)}
+# Livestream URL connection states (StreamSource): colour, Dashboard pill text, text over the preview (None = show video)
+STREAM_STATES = {"live": (theme.CERTAIN, "Counting", None),
+                 "buffering": (theme.APPROX, "Buffering", "BUFFERING ...\nwaiting for video from the stream"),
+                 "ad": (theme.APPROX, "Ad break", "AD BREAK ...\ncounting continues when the game is back"),
+                 "incomplete": (theme.APPROX, None, None),
+                 "reconnecting": (theme.REJECT, "Reconnecting", "RECONNECTING ...\nthe stream connection was lost"),
+                 "offline": (theme.REJECT, "Stream offline", "STREAM OFFLINE\nchecking again automatically")}
 
 
 def _span(text, color, bold=False):
@@ -266,6 +273,9 @@ def log_entries(message):
         return [(bool(message.get("generic")), main), (True, detail)]
     if kind == "status":
         return [(True, stamp + _span(message.get("text", ""), theme.DIM))]
+    if kind == "stream":
+        color = STREAM_STATES.get(message.get("state"), (theme.MUTED,))[0]
+        return [(False, stamp + _span(message.get("text", ""), color, bold=message.get("state") != "incomplete"))]
     if kind in ("info", "warn", "error", "line", "stderr"):
         text = str(message.get("text", "")).strip("\n")
         if not text:
@@ -759,6 +769,22 @@ class Dashboard(QWidget):
         self.start.setMinimumWidth(160)
         row.addWidget(self.start)
         box_layout.addLayout(row)
+        self.url_row = QWidget()                            # only for "Livestream URL"
+        url_layout = QVBoxLayout(self.url_row)
+        url_layout.setContentsMargins(0, 0, 0, 0)
+        url_layout.setSpacing(4)
+        self.url = QLineEdit()
+        self.url.setPlaceholderText("Paste the live link, e.g.  https://www.twitch.tv/channel  or  "
+                                    "https://www.youtube.com/watch?v=...")
+        url_layout.addWidget(self.url)
+        url_layout.addWidget(label("EXPERIMENTAL. Counts from the public stream as viewers get it (a few seconds behind), at "
+                                   "720p - no OBS, capture card or browser needed. Twitch and YouTube tested; the stream must "
+                                   "be live and public. If the connection drops, the app reconnects by itself, keeps your "
+                                   "counts and tells you which part could not be seen.", "hint", wrap=True))
+        self.url_row.hide()
+        box_layout.addWidget(self.url_row)
+        self.source.currentIndexChanged.connect(lambda _: self.url_row.setVisible(
+            (self.source.currentData() or {}).get("source") == "stream"))
         self.source_hint = label("", "hint", wrap=True)
         box_layout.addWidget(self.source_hint)
         box_layout.addWidget(hline())
@@ -1391,6 +1417,7 @@ class MainWindow(QMainWindow):
         self.error_seen = False
         self.quit_when_stopped = False
         self.recording = None                   # the worker's current capture ("capture" message), None = not recording
+        self.stream_state = None                # Livestream URL connection state ("stream" messages), None = not a stream
         self.marks_this_session = 0
         self.hotkey = None
         self.sources = []
@@ -1523,7 +1550,10 @@ class MainWindow(QMainWindow):
     def _fill_sources(self, devices, monitors, windows=()):
         cfg, _ = load_cfg()
         live = cfg["live"]
-        items = [("OBS Virtual Camera   (recommended)", {"source": "obs-camera"})]
+        items = [("OBS Virtual Camera   (recommended)", {"source": "obs-camera"}),
+                 ("Livestream URL   (Twitch / YouTube, no OBS needed)   - EXPERIMENTAL", {"source": "stream"})]
+        if not self.dashboard.url.text():
+            self.dashboard.url.setText(live["url"])
         names = [n for n in devices if n != "OBS Virtual Camera"]
         if live["source"] == "device" and live["device"] not in names and live["device"] != "OBS Virtual Camera":
             names.append(live["device"])
@@ -1556,6 +1586,7 @@ class MainWindow(QMainWindow):
                 break
         self.dashboard.source.setCurrentIndex(index)
         self.dashboard.source.blockSignals(False)
+        self.dashboard.url_row.setVisible((self.dashboard.source.currentData() or {}).get("source") == "stream")
         obs = "OBS Virtual Camera" in devices
         projector_tip = ("" if windows else " Virtual Camera busy or the capture card used by OBS? In OBS, right-click "
                          "your gameplay source > Windowed Projector (Source), then click Refresh.")
@@ -1593,6 +1624,13 @@ class MainWindow(QMainWindow):
                 values["monitor"] = data["monitor"]
             if data["source"] == "window":
                 values["window"] = data["window"]
+            if data["source"] == "stream":
+                url = self.dashboard.url.text().strip()
+                if not url.lower().startswith(("http://", "https://")) or any(c.isspace() for c in url):
+                    show_error(self, "Paste the full link of the live stream, for example\n"
+                                     "https://www.twitch.tv/channel  or  https://www.youtube.com/watch?v=...")
+                    return
+                values["url"] = url
             try:
                 C.update_config_file(config_file(), "live", values)   # the console version starts the same way
             except (C.UserError, OSError) as error:
@@ -1633,6 +1671,7 @@ class MainWindow(QMainWindow):
         restyle(d.start, "danger" if mode in ("connecting", "counting") else "primary")
         d.start.setEnabled(mode != "stopping")
         d.source.setEnabled(not running)
+        d.url.setEnabled(not running)
         d.refresh.setEnabled(not running)
         d.analyse.setEnabled(not running)
         if mode == "connecting":
@@ -1644,7 +1683,9 @@ class MainWindow(QMainWindow):
             self.started_at = time.monotonic()
         if not running:
             self.started_at = None
+            self.stream_state = None
             d.metrics.setText("Not counting.")
+            d.preview.view.setStyleSheet("")
             d.preview.clear()
         self.preview_visibility_changed()
 
@@ -1712,6 +1753,8 @@ class MainWindow(QMainWindow):
                 self.last_status = message
             if kind == "counts" and message.get("overlay") is not None:
                 self.dashboard.viewers.setText(message["overlay"].replace("\n", "   /   "))
+        elif kind == "stream":
+            self.show_stream_state(message.get("state"))
         elif kind == "error":
             self.error_seen = True
             self.dashboard.show_banner(str(message.get("text", "")))
@@ -1769,6 +1812,21 @@ class MainWindow(QMainWindow):
             self.read_state(force=True)
             if self.quit_when_stopped:
                 self.close()
+
+    def show_stream_state(self, state):
+        """Livestream URL: the Dashboard pill and the preview say when the stream is not delivering video."""
+        if state not in STREAM_STATES or STREAM_STATES[state][1] is None:
+            return                                      # "incomplete" is a log line only
+        color, pill, overlay = STREAM_STATES[state]
+        self.stream_state = state
+        if self.mode == "counting":
+            self.dashboard.set_pill(pill, color)
+        preview = self.dashboard.preview
+        if overlay:
+            preview.clear(overlay)
+            preview.view.setStyleSheet(f"color: {color}; font-size: 16px; font-weight: 600;")
+        else:
+            preview.view.setStyleSheet("")
 
     def set_counts(self, certain, approx, flash=False):
         changed = (certain, approx) != self.counts
@@ -1866,6 +1924,8 @@ class MainWindow(QMainWindow):
             self.preview_timer.stop()
 
     def _tick_preview(self):
+        if self.stream_state in ("buffering", "ad", "reconnecting", "offline"):
+            return                                      # keep the status text instead of the last (stale) picture
         frame = self.preview_reader.read()
         if frame is not None:
             _, width, height, data = frame

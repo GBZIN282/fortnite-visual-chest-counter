@@ -365,7 +365,7 @@ def config_overrides(args):
                  ("state", "path"): getattr(args, "state", None), ("state", "obs_dir"): getattr(args, "obs_dir", None),
                  ("logging", "dir"): getattr(args, "log_dir", None), ("live", "source"): getattr(args, "source", None),
                  ("live", "device"): getattr(args, "device", None), ("live", "monitor"): getattr(args, "monitor", None),
-                 ("live", "window"): getattr(args, "window", None)}
+                 ("live", "window"): getattr(args, "window", None), ("live", "url"): getattr(args, "url", None)}
 
 
 def config_path(args):
@@ -904,6 +904,15 @@ def explain_source_failure(kind, label, error_text):
                 "use the normal OBS Virtual Camera mode instead (recommended).")
     if kind == "desktop":
         return "Could not capture the screen. Try the recommended OBS Virtual Camera mode instead."
+    if kind == "stream":
+        if "No module named streamlink" in error_text:
+            return "The livestream reader (Streamlink) is missing. Extract the whole zip again."
+        return (f"Could not open the livestream ({label}).\n\n"
+                "  - Is the stream live right now? Offline channels have no video.\n"
+                "  - Use the full link: https://www.twitch.tv/CHANNEL, or a YouTube https://www.youtube.com/watch?v=... "
+                "(or https://www.youtube.com/@CHANNEL/live)\n"
+                "  - Private, members-only, subscriber-only and age-restricted streams cannot be read.\n\n"
+                f"Details: {error_text}")
     if kind == "window":
         if "is minimized" in error_text:
             return ("The OBS projector window is minimized, so there is no picture to count.\n\n"
@@ -1045,6 +1054,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     state = session.state
     try:
         source = sources.make_source(kind, fps, device=live["device"], monitor=live["monitor"], window=live["window"],
+                                     url=live["url"], quality=live["stream_quality"],
                                      video=args.video, start=args.start or 0.0, duration=args.duration)
     except ValueError as error:
         raise UserError(str(error))
@@ -1175,7 +1185,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                 guard.requested.wait(0.5)
             if control is not None and control.requested.is_set():
                 stop_reason = control.reason                # the app's Stop ended the frame source
-            if stop_reason == "stream ended" and kind in ("obs-camera", "device", "desktop", "window") \
+            if stop_reason == "stream ended" and kind in ("obs-camera", "device", "desktop", "window", "stream") \
                     and not (guard is not None and guard.requested.is_set()):
                 stop_reason = "video source stopped"
                 if kind == "window":
@@ -1598,7 +1608,15 @@ def cmd_diagnostics(args):
     out(f"Detector:         {det['process_fps']} fps | languages {det['languages']} | certain_min_tier {det['certain_min_tier']} | "
         f"medium_counts_alone {det['medium_counts_alone_languages']}")
     out(f"Live source:      {cfg['live']['source']}" + (f"  (window {cfg['live']['window']!r})"
-                                                          if cfg['live']['source'] == "window" else ""))
+                                                          if cfg['live']['source'] == "window" else
+                                                          f"  ({cfg['live']['url']}, {cfg['live']['stream_quality']})"
+                                                          if cfg['live']['source'] == "stream" else ""))
+    try:
+        sl = subprocess.run([sys.executable, "-m", "streamlink", "--version"], capture_output=True, text=True, timeout=30,
+                            stdin=paths.child_stdin(), creationflags=paths.child_process_flags())
+        out("Streamlink:       " + ((sl.stdout or sl.stderr).strip().splitlines() or ["?"])[-1][:80])
+    except Exception as error:
+        out(f"Streamlink:       could not run ({error})")
     ff = paths.ffmpeg_executable()
     if ff:
         try:
@@ -1772,7 +1790,9 @@ def build_parser():
     p.set_defaults(func=cmd_simulate)
 
     p = sub.add_parser("live", parents=[common], help="count chests from a live video source (the default)")
-    p.add_argument("--source", choices=["obs-camera", "device", "desktop", "window", "file"], help="override [live] source")
+    p.add_argument("--source", choices=["obs-camera", "device", "desktop", "window", "stream", "file"],
+                   help="override [live] source")
+    p.add_argument("--url", help="livestream URL for --source stream (Twitch / YouTube)")
     p.add_argument("--device", help="DirectShow device name for --source device")
     p.add_argument("--window", help="exact window title for --source window (an OBS Windowed Projector)")
     p.add_argument("--monitor", type=int, help="monitor number for --source desktop")

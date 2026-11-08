@@ -22,8 +22,10 @@ Backends (all passive pixel capture: nothing touches Fortnite, nothing runs on t
   file        a video file played in real time. For testing the live pipeline without a device.
 """
 
+import queue
 import re
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -358,7 +360,220 @@ class WindowSource(LiveSource):
         return out
 
 
-def make_source(kind, fps, device=None, monitor=1, video=None, start=0.0, duration=None, window=None):
+# ==================================================================
+# LIVESTREAM URL (Twitch / YouTube, read with Streamlink)
+# ==================================================================
+
+STREAM_QUALITIES = {"720p": "720p60,720p,best", "1080p": "1080p60,1080p,best", "480p": "480p,480p30,best"}
+
+
+class StreamSource:
+    """
+    A public livestream URL (Twitch, YouTube - anything Streamlink can read), without OBS or a browser:
+    Streamlink -> FFmpeg (1280x720 at the analysis rate) -> the detector.
+
+    Unlike the local sources, EVERY decoded picture is analysed, in order: these platforms deliver video in bursts of
+    several seconds, and the latest-frame reader would throw most of each burst away - chest pop-ups included. Delay does
+    not matter here, completeness does. Memory stays bounded by backpressure: a small picture queue, then the pipes, then
+    Streamlink's own buffer of compressed video. Timestamps are stream time (picture number / rate), not arrival time.
+
+    If the stream drops after it started (network, stream restart), it is opened again with backoff at the newest part
+    (nothing is analysed twice), the time line jumps over the missed part, and the counts are kept.
+    """
+    QUEUE_PICTURES = 15
+    BUFFERING_AFTER = 10.0                  # seconds without pictures (bursts normally arrive every ~4-5 s)
+    RECONNECT_DELAYS = (5, 10, 20, 30, 60)
+    FIRST_PICTURE_TIMEOUT = 45.0
+
+    def __init__(self, url, fps, quality="720p"):
+        self.url, self.fps = url, fps
+        self.quality = STREAM_QUALITIES.get(quality, quality)
+        self.label = f"stream: {url}"
+        self.info = {"input_resolution": None, "input_fps": None}
+        self.frames_read = self.frames_processed = self.frames_dropped = 0
+        self.stderr_tail = []
+        self.ended_reason = None
+        self._queue = queue.Queue(maxsize=self.QUEUE_PICTURES)
+        self._stop = threading.Event()
+        self._started = threading.Event()   # the first picture arrived, or opening failed
+        self._failure = None
+        self._done = False
+        self._reconnecting = False
+        self._procs = ()
+        self._notices = deque()
+        self._last_t = 0.0
+
+    def streamlink_command(self, live_edge):
+        return [sys.executable, "-m", "streamlink", "--stdout", "--loglevel", "info", "--hls-live-edge", str(live_edge),
+                "--stream-segment-attempts", "5", "--stream-timeout", "30", self.url, self.quality]
+
+    # ---- processes
+    def _start(self, live_edge):
+        flags = paths.child_process_flags()
+        sl = subprocess.Popen(self.streamlink_command(live_edge), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              stdin=subprocess.DEVNULL, creationflags=flags)
+        ff = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "info", "-i", "pipe:0", "-an",
+                               "-vf", f"scale={WIDTH}:{HEIGHT},fps={self.fps}", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
+                              stdin=sl.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=10 ** 7,
+                              creationflags=flags)
+        sl.stdout.close()                   # FFmpeg owns the pipe now: if it ends, Streamlink gets a broken pipe and ends too
+        self._procs = (sl, ff)
+        for proc, tag in ((sl, "streamlink"), (ff, "ffmpeg")):
+            threading.Thread(target=self._read_log, args=(proc, tag), daemon=True).start()
+        return sl, ff
+
+    def _kill(self):
+        for proc in self._procs:
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+
+    def _read_log(self, proc, tag):
+        for raw in proc.stderr:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            self.stderr_tail = (self.stderr_tail + [f"{tag}: {line}"])[-12:]
+            if tag == "ffmpeg" and "Stream #0" in line and "Video:" in line and self.info["input_resolution"] is None:
+                size = re.search(r"(\d{3,5})x(\d{3,5})", line.split("Video:")[1])
+                rate = re.search(r"([\d.]+) fps", line)
+                if size:
+                    self.info["input_resolution"] = (int(size[1]), int(size[2]))
+                if rate:
+                    self.info["input_fps"] = float(rate[1])
+            elif tag == "streamlink" and ("advertisement" in line.lower() or "pre-roll ads" in line.lower()):
+                self._notices.append(("ad", "AD BREAK on the stream - counting continues when the game is back."))
+
+    def _error(self):
+        """Streamlink's own error line ("No playable streams found ...") from the latest attempt, if any."""
+        for line in reversed(self.stderr_tail):
+            if line.startswith("streamlink: error: "):
+                return line[len("streamlink: error: "):]
+        return None
+
+    # ---- the reader thread: every picture, in order
+    def _pump(self):
+        live_edge, attempt, n, gap, lost_at = 3, 0, 0, 0.0, None
+        while not self._stop.is_set():
+            self.stderr_tail = []
+            _, ff = self._start(live_edge)
+            got = 0
+            while not self._stop.is_set():
+                raw = ff.stdout.read(FRAME_BYTES)
+                if len(raw) < FRAME_BYTES:
+                    break
+                if lost_at is not None:     # back after a drop: the time line jumps over the part that was not seen
+                    missed = time.monotonic() - lost_at
+                    gap += missed
+                    lost_at, self._reconnecting = None, False
+                    self._notices.append(("live", "RECONNECTED - video resumed, counting continues (counts kept)."))
+                    self._notices.append(("incomplete", f"about {missed:.0f} s of the stream could not be seen: chests "
+                                                        "opened in that part are missing from the count."))
+                t = gap + n / self.fps
+                n, got = n + 1, got + 1
+                item = (t, np.frombuffer(raw, np.uint8).reshape(HEIGHT, WIDTH, 3))
+                while not self._stop.is_set():
+                    try:
+                        self._queue.put(item, timeout=0.5)      # blocks while the detector catches up (backpressure)
+                        break
+                    except queue.Full:
+                        pass
+                self.frames_read += 1
+                self._started.set()
+            self._kill()
+            if self._stop.is_set():
+                break
+            reason = self._error() or "the stream ended or the connection dropped"
+            if n == 0:                      # never got a picture: report it instead of retrying for ever
+                self._failure = reason
+                self._started.set()
+                break
+            attempt = 1 if got else attempt + 1
+            delay = self.RECONNECT_DELAYS[min(attempt, len(self.RECONNECT_DELAYS)) - 1]
+            if lost_at is None:
+                lost_at = time.monotonic()
+            self._reconnecting = True
+            if "No playable streams" in reason:
+                self._notices.append(("offline", f"STREAM OFFLINE ({reason}). Checking again in {delay} s - your counts "
+                                                 "are kept."))
+            else:
+                self._notices.append(("reconnecting", f"CONNECTION LOST ({reason}). Reconnecting in {delay} s - your "
+                                                      "counts are kept."))
+            self._stop.wait(delay)
+            live_edge = 1                   # newest part only: nothing already analysed comes again
+        self._done = True
+
+    # ---- the LiveSource interface
+    def open(self, timeout=20.0):
+        threading.Thread(target=self._pump, daemon=True, name="stream-pump").start()
+        if not self._started.wait(max(timeout, self.FIRST_PICTURE_TIMEOUT)):
+            detail = " | ".join(self.stderr_tail[-3:])
+            self.close()
+            raise RuntimeError(f"no video arrived from the stream within {self.FIRST_PICTURE_TIMEOUT:.0f} s"
+                               + (f" ({detail})" if detail else ""))
+        if self._failure:
+            self.close()
+            raise RuntimeError(self._failure)
+        return self.info
+
+    @staticmethod
+    def _say(state, text):
+        """live | buffering | ad | incomplete | reconnecting | offline. The app colours these (green / yellow / red) and
+        shows the non-live ones over the preview; the console prints them as info / warning / error lines."""
+        from fortnite_chest_counter.console import CONSOLE
+        if CONSOLE.machine:
+            CONSOLE.emit("stream", state=state, text=text)
+        elif state in ("reconnecting", "offline"):
+            CONSOLE.error(text)
+        elif state == "live":
+            CONSOLE.info(text)
+        else:
+            CONSOLE.warn(text)
+
+    def frames(self):
+        last, buffering = time.monotonic(), False             # notices are printed here, in the counting thread
+        while not self._stop.is_set():
+            while self._notices:
+                self._say(*self._notices.popleft())
+            try:
+                t, frame = self._queue.get(timeout=1.0)
+            except queue.Empty:
+                if self._done:
+                    return
+                if not buffering and not self._reconnecting and time.monotonic() - last > self.BUFFERING_AFTER:
+                    buffering = True
+                    self._say("buffering", f"BUFFERING - no video from the stream for {self.BUFFERING_AFTER:.0f} s (slow "
+                                           "connection, an ad break or the stream paused). Waiting.")
+                continue
+            if buffering:
+                buffering = False
+                self._say("live", "video is coming in again - counting continues.")
+            last = time.monotonic()
+            self.frames_processed += 1
+            self._last_t = t
+            yield t, frame
+
+    def request_stop(self):
+        self._stop.set()
+        self._kill()
+
+    def close(self, wait=True):
+        self.request_stop()
+        if wait:
+            for proc in self._procs:
+                try:
+                    proc.wait(timeout=3)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
+
+    def elapsed(self):
+        return self._last_t
+
+
+def make_source(kind, fps, device=None, monitor=1, video=None, start=0.0, duration=None, window=None, url=None,
+                quality="720p"):
     """Build a LiveSource for one of the backends."""
     if kind in ("obs-camera", "device"):
         name = "OBS Virtual Camera" if kind == "obs-camera" else device
@@ -378,6 +593,11 @@ def make_source(kind, fps, device=None, monitor=1, video=None, start=0.0, durati
             raise ValueError("source 'window' needs a window title: pick the OBS projector in the app's Video source list, "
                              "or set [live] window in config.toml")
         return WindowSource(window, fps)
+    if kind == "stream":
+        if not url:
+            raise ValueError("source 'stream' needs a URL: paste the Twitch or YouTube link in the app, or set [live] url "
+                             "in config.toml")
+        return StreamSource(url, fps, quality)
     if kind == "file":
         args = ["-re"] + (["-ss", f"{start:.3f}"] if start else []) + (["-t", f"{duration:.3f}"] if duration else []) + ["-i", str(video)]
         return LiveSource(f"file (real time): {video}", args, fps)
