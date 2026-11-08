@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = ["numpy", "scipy", "streamlink>=8.6"]   # streamlink: livestream URL input (v0.2.1)
+dependencies = ["numpy", "scipy", "streamlink>=8.6", "pycryptodome"]   # streamlink: livestream URL input; pycryptodome: update signatures
 
 [project.optional-dependencies]
 gui = ["PySide6-Essentials>=6.8"]                      # the desktop app (v0.2.0+)

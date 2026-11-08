@@ -23,9 +23,12 @@ src/fortnite_chest_counter/
   capture.py        optional diagnostic recording of the detector's input + decisions + marks ([capture], CAPTURE.md)
   review.py         `review` command: replay captures through the current detector, compare with live + labels
   progress.py       time-left estimates from measured throughput (Analyse a recording, Review captures)
+  update/           built-in updater (v0.2.3): releases.py (GitHub discovery), authenticity.py + trust.py (signed manifest,
+                    installed public keys), check.py (one background check). Keys: UPDATE_SIGNING.md
   templates/        runtime detector templates (.npy) - tracked in Git, REQUIRED at runtime
 packaging/          build_release.py (embeddable Python + verified numpy/scipy/PySide6 + bundled ffmpeg + launcher + zip),
-                    launcher/ (launcher.c, manifest, app.ico), make_icon.py, README.html, notices, licenses/ (LGPL/GPL texts)
+                    launcher/ (launcher.c, manifest, app.ico), make_icon.py, README.html, notices, licenses/ (LGPL/GPL texts),
+                    sign_release.py (update-signing keys and release signatures; maintainer only, never shipped)
 tests/              test_basics.py, test_release.py, test_app.py, test_obs.py, test_stream.py (no video or Qt needed; one app
                     test uses samples/ if present; test_obs.py runs a fake OBS WebSocket server, test_stream.py a fake
                     Streamlink, both in-process / local)
