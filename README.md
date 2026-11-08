@@ -106,6 +106,10 @@ Details and the other files: [overlay guide](docs/guides/obs-overlay.md).
   picture the counter analyses. Showing, hiding or minimising them never changes counting.
 - **Edit counts... / Reset...:** already opened chests? Enter the number as APPROX with CERTAIN `0`; new chests are added on
   top. Reset sets both to 0. Both work while counting; closing the app never resets anything.
+- **Profiles** (v0.2.2): one per person you count, for example one per streamer. Each profile keeps its own counts and its
+  own video source (such as that streamer's Twitch link). **New profile...**, **Rename...** and **Delete...** sit above the
+  numbers; a deleted profile's counts are kept in `state\profiles\deleted\`. One profile counts at a time, and the OBS text
+  file always shows the selected profile. Counts from earlier versions become the **Default** profile.
 - **Analyse a recording...:** count a video file, faster than real time; never changes the live counter
   ([guide](docs/guides/recorded-video.md)).
 - **Diagnostic recording and Ctrl+Alt+M:** optional - keep the video around a missed chest (press **Ctrl+Alt+M** or **Mark
@@ -138,7 +142,7 @@ the counter away from the game. Tournament or event rules can be stricter than n
 
 ## Updating
 
-Your data is stored next to, not inside, the program files: `state\` (counts), `config.toml` (settings), `logs\`,
+Your data is stored next to, not inside, the program files: `state\` (counts of every profile), `config.toml` (settings), `logs\`,
 `captures\`, `obs_output\` (re-created automatically). Easiest: close the app, extract the new ZIP **into the same folder** and
 replace files; opening the app writes your real numbers back into the OBS text files. If you extract to a new folder, copy
 `state\` and `config.toml` and re-point the OBS Text source.

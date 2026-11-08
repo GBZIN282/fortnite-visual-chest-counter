@@ -25,12 +25,12 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QPoint, QRect, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QIcon, QImage, QPalette, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-                               QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                               QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton,
                                QScrollArea, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
 
 from fortnite_chest_counter import counter as C
-from fortnite_chest_counter import paths, settings
+from fortnite_chest_counter import paths, profiles, settings
 from fortnite_chest_counter.gui import theme
 from fortnite_chest_counter.gui.worker import Worker, run_command
 from fortnite_chest_counter.obs import credentials as obs_credentials
@@ -108,7 +108,11 @@ def config_file():
 
 
 def load_cfg():
+    """config.toml with the counter file of the ACTIVE count profile (profiles.py) - every read of the counts, every
+    reset / edit and the OBS files follow the profile chosen on the Dashboard."""
     cfg, _, warnings = settings.load_config(str(config_file()) if config_file().exists() else None)
+    cfg["state"]["path"] = str(paths.APP_DIR / cfg["state"]["path"])          # profiles.json lives next to it
+    profiles.apply(cfg, warn=warnings.append)
     return cfg, warnings
 
 
@@ -756,6 +760,27 @@ class Dashboard(QWidget):
         banner_layout.addWidget(button("Dismiss", on_click=self.banner.hide), 0, Qt.AlignTop)
         self.banner.hide()
         layout.addWidget(self.banner)
+
+        # count profile (v0.2.2): whose chests these are. One profile counts at a time.
+        prow = QHBoxLayout()
+        prow.setSpacing(8)
+        prow.addWidget(label("Profile"))
+        self.profile = QComboBox()
+        self.profile.setMinimumWidth(220)
+        self.profile.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.profile.setToolTip("Each profile keeps its own counts and its own video source (for example one profile per "
+                                "streamer). One profile counts at a time; OBS always shows the selected profile.")
+        self.profile.activated.connect(win.switch_profile)
+        prow.addWidget(self.profile, 1)
+        self.profile_new = button("New profile...", tip="A new profile with its own counts, starting at 0",
+                                  on_click=win.new_profile)
+        self.profile_rename = button("Rename...", tip="Change the name of the selected profile (its counts stay)",
+                                     on_click=win.rename_profile)
+        self.profile_delete = button("Delete...", tip="Remove the selected profile (its counts are kept in a backup "
+                                                      "file)", on_click=win.delete_profile)
+        for widget in (self.profile_new, self.profile_rename, self.profile_delete):
+            prow.addWidget(widget)
+        layout.addLayout(prow)
 
         # the two numbers
         counts = QHBoxLayout()
@@ -1501,6 +1526,7 @@ class MainWindow(QMainWindow):
         self.dashboard.show_log.setChecked(True)
         self.dashboard.show_preview.setChecked(False)
         self.dashboard._panels()
+        self.fill_profiles()
         self.set_mode("stopped")
         self.read_state(force=True)
         if not C.counter_is_running(paths.APP_DIR / load_cfg()[0]["state"]["path"]):
@@ -1591,8 +1617,7 @@ class MainWindow(QMainWindow):
         self._source_scan.start()
 
     def _fill_sources(self, devices, monitors, windows=()):
-        cfg, _ = load_cfg()
-        live = cfg["live"]
+        live = self.profile_live()
         items = [("OBS Virtual Camera   (recommended)", {"source": "obs-camera"}),
                  ("Livestream URL   (Twitch / YouTube, no OBS needed)   - EXPERIMENTAL", {"source": "stream"})]
         if not self.dashboard.url.text():
@@ -1644,6 +1669,131 @@ class MainWindow(QMainWindow):
                                                "click Start Virtual Camera, then click Refresh." + projector_tip)
         self.dashboard.refresh.setEnabled(True)
 
+    def select_source(self, wanted):
+        """Select the source list entry that matches `wanted` (a [live]-style dict). -> True if one was found."""
+        box = self.dashboard.source
+        for i in range(box.count()):
+            data = box.itemData(i) or {}
+            if data.get("source") == wanted.get("source") and all(data[k] == wanted.get(k) for k in data if k != "source"):
+                box.setCurrentIndex(i)
+                return True
+        return False
+
+    # ---- count profiles (profiles.py): one counts at a time, each with its own counts and video source
+    def profile_live(self):
+        """config.toml [live] with the active profile's remembered source on top."""
+        cfg, _ = load_cfg()
+        live = dict(cfg["live"])
+        try:
+            reg = profiles.load(cfg["profile"]["state_base"])
+            remembered = profiles.active(reg).get("source") or {}
+        except (OSError, profiles.ProfileError):
+            remembered = {}
+        if remembered.get("source"):
+            live.update(remembered)
+        return live
+
+    def profile_base(self):
+        return load_cfg()[0]["profile"]["state_base"]
+
+    def fill_profiles(self):
+        base = self.profile_base()
+        reg = profiles.load(base)
+        box = self.dashboard.profile
+        box.blockSignals(True)
+        box.clear()
+        for p in reg["profiles"]:
+            box.addItem(p["name"], p["id"])
+        box.setCurrentIndex(max(box.findData(reg["active"]), 0))
+        box.blockSignals(False)
+        self.dashboard.profile_delete.setEnabled(reg["active"] != profiles.DEFAULT_ID and not self.worker.running())
+        name = profiles.active(reg)["name"]
+        self.setWindowTitle(APP_NAME if len(reg["profiles"]) == 1 else f"{APP_NAME}  -  {name}")
+        return reg
+
+    def _profile_busy(self):
+        """A counter (this window's or a console one) is writing the active profile's counts right now."""
+        if self.worker.running():
+            return True
+        return C.counter_is_running(load_cfg()[0]["state"]["path"])
+
+    def switch_profile(self, index):
+        wanted = self.dashboard.profile.itemData(index)
+        cfg, _ = load_cfg()
+        if wanted is None or wanted == cfg["profile"]["id"]:
+            return
+        if self._profile_busy():
+            show_error(self, "Stop counting before switching to another profile.")
+            self.fill_profiles()
+            return
+        try:
+            profiles.set_active(cfg["profile"]["state_base"], wanted)
+        except (OSError, profiles.ProfileError) as error:
+            show_error(self, f"Could not switch the profile: {error}")
+            self.fill_profiles()
+            return
+        self.profile_changed()
+
+    def profile_changed(self):
+        """After a switch / new profile: its counts, its OBS text, its video source."""
+        reg = self.fill_profiles()
+        self.read_state(force=True)
+        self.write_obs_files(quiet=True)              # OBS shows the selected profile
+        live = self.profile_live()
+        self.select_source({"source": live["source"], "device": live["device"], "monitor": live["monitor"],
+                            "window": live["window"]})
+        self.dashboard.url.setText(live["url"])
+        stab = self.dashboard.stability
+        stab.setCurrentIndex(max(stab.findData(live["stream_stability"]), 0))
+        self.dashboard.url_row.setVisible((self.dashboard.source.currentData() or {}).get("source") == "stream")
+        self.add_log({"type": "info", "text": f"Profile: {profiles.active(reg)['name']}  -  CERTAIN {fmt(self.counts[0])}"
+                                              f" / APPROX {fmt(self.counts[1])}. OBS now shows this profile."})
+
+    def new_profile(self):
+        if self._profile_busy():
+            show_error(self, "Stop counting before making a new profile.")
+            return
+        name, ok = QInputDialog.getText(self, "New profile", "Name of the new profile (for example the streamer's name).\n"
+                                                             "It starts at 0 and keeps its own counts and video source:")
+        if not ok:
+            return
+        try:
+            profiles.create(self.profile_base(), name)
+        except (OSError, profiles.ProfileError) as error:
+            show_error(self, str(error))
+            return
+        self.profile_changed()
+
+    def rename_profile(self):
+        cfg, _ = load_cfg()
+        current = cfg["profile"]
+        name, ok = QInputDialog.getText(self, "Rename profile", "New name (the counts stay the same):",
+                                        QLineEdit.Normal, current["name"])
+        if not ok or name.strip() == current["name"]:
+            return
+        try:
+            profiles.rename(current["state_base"], current["id"], name)
+        except (OSError, profiles.ProfileError) as error:
+            show_error(self, str(error))
+            return
+        self.fill_profiles()
+
+    def delete_profile(self):
+        cfg, _ = load_cfg()
+        current = cfg["profile"]
+        if current["id"] == profiles.DEFAULT_ID or self._profile_busy():
+            return
+        if not ask(self, "Delete profile?", f'Delete the profile "{current["name"]}" (CERTAIN {fmt(self.counts[0])} / '
+                                            f'APPROX {fmt(self.counts[1])})?\n\nIt disappears from the list. Its counts '
+                                            f"are kept in a backup file in state\\profiles\\deleted.", "Delete", danger=True):
+            return
+        try:
+            profiles.delete(current["state_base"], current["id"])
+        except (OSError, profiles.ProfileError) as error:
+            show_error(self, str(error))
+            return
+        self.profile_changed()
+
     # ---- counting
     def toggle_counting(self):
         if self.worker.running():
@@ -1655,7 +1805,8 @@ class MainWindow(QMainWindow):
         data = self.dashboard.source.currentData()
         if not data or self.worker.running():
             return
-        argv = ["live", "--gui"]
+        cfg, _ = load_cfg()
+        argv = ["live", "--gui", "--profile", cfg["profile"]["id"]]
         if self.preview_reader is not None:
             argv += ["--preview", self.preview_reader.name]
         if data["source"] == "file":                                 # developers: FCC_DEV_VIDEO (+ FCC_DEV_VIDEO_START)
@@ -1680,7 +1831,8 @@ class MainWindow(QMainWindow):
                 values["stream_stability"] = self.dashboard.stability.currentData()
             try:
                 C.update_config_file(config_file(), "live", values)   # the console version starts the same way
-            except (C.UserError, OSError) as error:
+                profiles.remember_source(cfg["profile"]["state_base"], cfg["profile"]["id"], values)
+            except (C.UserError, OSError, profiles.ProfileError) as error:
                 show_error(self, f"Could not save the video source choice: {error}")
                 return
         self.dashboard.banner.hide()
@@ -1693,7 +1845,8 @@ class MainWindow(QMainWindow):
             show_error(self, f"The counter could not start ({error}). Extract the whole zip again and keep every file "
                              "and folder together.")
             return
-        self.add_log({"type": "info", "text": f"Starting: {self.dashboard.source.currentText().split('   ')[0]} ..."})
+        whose = f" (profile {cfg['profile']['name']})" if self.dashboard.profile.count() > 1 else ""
+        self.add_log({"type": "info", "text": f"Starting{whose}: {self.dashboard.source.currentText().split('   ')[0]} ..."})
         self.set_mode("connecting")
 
     def stop_counting(self):
@@ -1718,6 +1871,9 @@ class MainWindow(QMainWindow):
         restyle(d.start, "danger" if mode in ("connecting", "counting") else "primary")
         d.start.setEnabled(mode != "stopping")
         d.source.setEnabled(not running)
+        for widget in (d.profile, d.profile_new, d.profile_rename):
+            widget.setEnabled(not running)
+        d.profile_delete.setEnabled(not running and d.profile.currentData() != profiles.DEFAULT_ID)
         d.url.setEnabled(not running)
         d.stability.setEnabled(not running)
         d.refresh.setEnabled(not running)
@@ -1995,7 +2151,8 @@ class MainWindow(QMainWindow):
         self._set(dialog.certain.value(), dialog.approx.value(), "set_count")
 
     def reset_counts(self):
-        if ask(self, "Reset the counter?", "Set both counts to 0? This cannot be undone.", "Reset to 0", danger=True):
+        whose = "" if self.dashboard.profile.count() <= 1 else f' of the profile "{self.dashboard.profile.currentText()}"'
+        if ask(self, "Reset the counter?", f"Set both counts{whose} to 0? This cannot be undone.", "Reset to 0", danger=True):
             self._set(0, 0, "reset")
 
     def _set(self, certain, approx, action):

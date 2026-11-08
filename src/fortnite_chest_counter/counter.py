@@ -17,6 +17,7 @@ Commands
     python -m fortnite_chest_counter devices                           # list video devices and monitors
     python -m fortnite_chest_counter simulate --name Fortnite-PS5-Pro --reset   # recorded video, chronological
     python -m fortnite_chest_counter show | reset | adjust --certain -1 --approx -1
+    python -m fortnite_chest_counter profiles [--activate NAME]         # count profiles (one per person); any command: --profile NAME
     python -m fortnite_chest_counter diagnostics                       # support report (also saved to logs/diagnostics.txt)
     python -m fortnite_chest_counter --version
     python -m fortnite_chest_counter evaluate --name Fortnite-PS5-Pro --log logs/session_xxx.jsonl
@@ -44,6 +45,7 @@ import numpy as np
 from fortnite_chest_counter.console import CONSOLE
 from fortnite_chest_counter.detection import fusion
 from fortnite_chest_counter import paths
+from fortnite_chest_counter import profiles
 from fortnite_chest_counter import settings
 from fortnite_chest_counter.detection import visual as V
 from fortnite_chest_counter.version import APP_NAME, RELEASE_CHANNEL, __version__
@@ -410,10 +412,25 @@ def make_config(args):
     CONSOLE.configure(cfg["console"]["verbosity"], cfg["console"]["colors"])
     for w in warnings:
         CONSOLE.warn(w)
+    use_profiles(cfg, args)
     from fortnite_chest_counter import estimator
     estimator.configure(cfg["detector"])
     estimator.SAVE_SNAPSHOTS = cfg["logging"]["enabled"] and cfg["logging"]["save_snapshots"]
     return cfg, origin
+
+
+def use_profiles(cfg, args):
+    """Count into the active profile (profiles.py), or the one named by --profile. An explicit --state file is used
+    exactly as given (tests, research, two counters side by side)."""
+    choice = getattr(args, "profile", None)
+    if getattr(args, "state", None):
+        if choice:
+            raise UserError("--profile and --state cannot be used together.")
+        return
+    try:
+        profiles.apply(cfg, choice, warn=CONSOLE.warn)
+    except profiles.ProfileError as error:
+        raise UserError(str(error))
 
 
 # ==================================================================
@@ -990,7 +1007,7 @@ def _open_capture(cfg, kind, label, res, in_fps, fps, mode=None):
                           c["mark_before_seconds"], c["mark_after_seconds"], ffmpeg=paths.ffmpeg_executable() or "ffmpeg",
                           quality=c["quality"],
                           info={"version": __version__, "source": label, "source_type": kind, "input_resolution": res,
-                                "input_fps": in_fps, "detector": cfg["detector"]})
+                                "input_fps": in_fps, "detector": cfg["detector"], "profile": profile_label(cfg)})
     except Exception as error:
         CONSOLE.warn(f"diagnostic recording could not start ({error}); counting is not affected")
         return None
@@ -1099,7 +1116,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     session.log.write({"event": "session_start", "app_version": __version__, "source_type": kind, "source": source.label,
                        "input_resolution": res, "input_fps": in_fps, "normalized": [sources.WIDTH, sources.HEIGHT],
                        "process_fps": fps, "session_started": now_iso(), "config": origin,
-                       "ui": "app" if control is not None else "console"})
+                       "ui": "app" if control is not None else "console", "profile": profile_label(cfg)})
     interval = live["status_interval_seconds"]
     recent = deque(maxlen=300)                              # bounded: a 12-hour stream must not grow memory
     n_frames, total_s, max_s = 0, 0.0, 0.0
@@ -1262,6 +1279,11 @@ def cmd_devices(args):
         print(f"  {i}: {w}x{h} at ({x},{y})")
 
 
+def profile_label(cfg):
+    """The profile name recorded in logs and captures (None when an explicit --state file is used)."""
+    return (cfg.get("profile") or {}).get("name")
+
+
 def show_counts(session):
     CONSOLE.line(f"  {display_text(session.display, 'certain', session.state)}", "green")
     CONSOLE.line(f"  {display_text(session.display, 'approx', session.state)}", "yellow")
@@ -1273,7 +1295,7 @@ def cmd_show(args):
     preflight(cfg, needs_video=False)
     session = CounterSession(cfg)
     session.write_obs()
-    print("\nCurrent counter:")
+    print(f"\nCurrent counter{' - profile ' + profile_label(cfg) if profile_label(cfg) else ''}:")
     show_counts(session)
     print("\n  (CERTAIN is part of APPROX: APPROX is the estimated total.)")
     for line in overlay_summary(session.display, session.state, session.obs_dir):
@@ -1609,6 +1631,11 @@ def cmd_diagnostics(args):
     out(f"Settings:         {origin}" + (f"  ({len(warnings)} warning(s))" if warnings else ""))
     for w in warnings:
         out(f"  ! {w}")
+    try:
+        reg = profiles.load(cfg["state"]["path"], warn=lambda m: out(f"  ! {m}"))
+        out(f"Profiles:         {len(reg['profiles'])} (active: {profiles.active(reg)['name']})")
+    except Exception as error:
+        out(f"Profiles:         could not be read ({error})")
     det = cfg["detector"]
     out(f"Detector:         {det['process_fps']} fps | languages {det['languages']} | certain_min_tier {det['certain_min_tier']} | "
         f"medium_counts_alone {det['medium_counts_alone_languages']}")
@@ -1743,6 +1770,32 @@ def cmd_review(args):
     CONSOLE.emit("review_finished", captures=len(captures), minutes=round((time.monotonic() - started) / 60, 1))
 
 
+def cmd_profiles(args):
+    """List the count profiles (and optionally make one active - the desktop app shows the same list)."""
+    banner()
+    cfg, _, warnings = settings.load_config(getattr(args, "config", None), config_overrides(args))
+    for w in warnings:
+        CONSOLE.warn(w)
+    base = cfg["state"]["path"]
+    try:
+        if args.activate:
+            entry = profiles.find(profiles.load(base, warn=CONSOLE.warn), args.activate)
+            if counter_is_running(profiles.profile_state_path(base, profiles.load(base)["active"])):
+                raise UserError("A counter is running for the active profile. Stop it before switching profiles.")
+            profiles.set_active(base, entry["id"])
+            CONSOLE.info(f'Active profile: {entry["name"]}')
+        reg = profiles.load(base, warn=CONSOLE.warn)
+    except profiles.ProfileError as error:
+        raise UserError(str(error))
+    display = cfg["display"]
+    print("\nProfiles (the active one is counted and shown in OBS):")
+    for p in reg["profiles"]:
+        state = load_state(profiles.profile_state_path(base, p["id"]), warn=CONSOLE.warn)
+        mark = "*" if p["id"] == reg["active"] else " "
+        print(f"  {mark} {p['name']:<{profiles.MAX_NAME}}  CERTAIN {settings.format_count(state['certain'], display['use_thousands_separator'])}"
+              f" | APPROX {settings.format_count(state['approximate'], display['use_thousands_separator'])}")
+
+
 def cmd_evaluate(args):
     events = [json.loads(line) for line in Path(args.log).read_text(encoding="utf-8").splitlines() if line.strip()]
     events = [e for e in events if e.get("source") not in ("manual", None) and "time" in e]
@@ -1783,6 +1836,7 @@ def build_parser():
     common.add_argument("--obs-dir", help="override [state] obs_dir")
     common.add_argument("--log-dir", help="override [logging] dir")
     common.add_argument("--process-fps", type=int, help="override [detector] process_fps")
+    common.add_argument("--profile", help="use this count profile (name) instead of the active one")
 
     p = sub.add_parser("simulate", parents=[common], help="(development) run a recorded video through the live pipeline")
     p.add_argument("--name", help="recording name, e.g. Fortnite-PS5-Pro")
@@ -1844,6 +1898,9 @@ def build_parser():
                    help="use config.toml's detector settings instead of the ones recorded with each capture")
     p.add_argument("--gui", action="store_true", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_review)
+    p = sub.add_parser("profiles", parents=[common], help="list the count profiles (one per person)")
+    p.add_argument("--activate", metavar="NAME", help="make this profile the active one")
+    p.set_defaults(func=cmd_profiles)
     p = sub.add_parser("evaluate", help="(development) score a session log against verified knowledge")
     p.add_argument("--name", required=True)
     p.add_argument("--log", required=True)
