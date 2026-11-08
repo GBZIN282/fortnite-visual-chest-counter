@@ -29,7 +29,7 @@ version = { attr = "fortnite_chest_counter.version.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-fortnite_chest_counter = ["templates/**/*.npy", "gui/assets/*.png"]
+fortnite_chest_counter = ["templates/**/*.npy", "gui/assets/*.png", "gui/assets/*.ico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

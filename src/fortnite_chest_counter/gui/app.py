@@ -68,6 +68,35 @@ def app_icon():
     return icon
 
 
+def set_class_icon(widget):
+    """Windows: also give the window CLASS our icon. Qt registers its window class with the icon resource of the running
+    .exe - here pythonw.exe, which has none Qt uses - so the class icon was Windows' generic application icon. The window
+    itself always carries our icon (WM_SETICON), but when the app is too busy to answer the taskbar's WM_GETICON in time
+    (typically while it is still starting up), Windows falls back to the class icon: the generic icon "sometimes" seen in
+    the taskbar. With the class icon set as well, every fallback shows our icon. Never fatal."""
+    if os.name != "nt":
+        return False
+    done = 0
+    try:
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int,
+                                      wintypes.UINT]
+        user32.LoadImageW.restype = wintypes.HANDLE
+        user32.SetClassLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_size_t]
+        user32.SetClassLongPtrW.restype = ctypes.c_size_t
+        hwnd = int(widget.winId())                          # creates the native window if it does not exist yet
+        for index, metric in ((-14, 11), (-34, 49)):        # GCLP_HICON / SM_CXICON, GCLP_HICONSM / SM_CXSMICON
+            size = user32.GetSystemMetrics(metric)
+            icon = user32.LoadImageW(None, str(ASSETS / "app.ico"), 1, size, size, 0x10)   # IMAGE_ICON, LR_LOADFROMFILE
+            if icon:
+                user32.SetClassLongPtrW(hwnd, index, icon)
+                done += 1
+    except Exception:
+        pass
+    return done == 2
+
+
 def open_path(path):
     path = Path(path)
     if path.is_dir() or path.is_file():
@@ -2144,6 +2173,7 @@ def self_test(app, report_path):
         from PySide6.QtCore import qVersion
         result.update(pyside=PySide6.__version__, qt=qVersion(), platform=app.platformName())
         window = MainWindow()
+        result["class_icon"] = set_class_icon(window)
         window.setAttribute(Qt.WA_DontShowOnScreen, True)
         window.show()
         deadline = time.monotonic() + 20
@@ -2155,7 +2185,7 @@ def self_test(app, report_path):
             time.sleep(0.02)
         result["sources"] = [window.dashboard.source.itemText(i) for i in range(window.dashboard.source.count())]
         result["screenshot"] = str(report_path.with_suffix(".png"))
-        result["ok"] = bool(window.grab().save(result["screenshot"])) and bool(result["sources"])
+        result["ok"] = bool(window.grab().save(result["screenshot"])) and bool(result["sources"]) and result["class_icon"]
         window.preview_reader and window.preview_reader.close()
     except Exception:
         result["error"] = traceback.format_exc()
@@ -2185,6 +2215,7 @@ def main(argv=None):
         QMessageBox.information(None, APP_NAME, f"{APP_NAME} is already open.\n\nLook for it in the taskbar.")
         return 0
     window = MainWindow()
+    set_class_icon(window)
     sys.excepthook = _crash_hook(lambda: window)
     window.restore_layout()
     window.show()

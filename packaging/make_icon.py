@@ -6,6 +6,7 @@ Developers only (needs Pillow):   python packaging/make_icon.py
 The outputs are committed, so a release build does not need Pillow.
 """
 
+import shutil
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -75,6 +76,7 @@ def main():
     ico = ROOT / "packaging" / "launcher" / "app.ico"
     ico.parent.mkdir(parents=True, exist_ok=True)
     big.resize((256, 256), Image.LANCZOS).save(ico, sizes=[(s, s) for s in sizes])
+    shutil.copy2(ico, assets / "app.ico")       # the app's Windows window-class icon (gui/app.py set_class_icon)
     print(f"wrote {assets} and {ico}")
 
 
