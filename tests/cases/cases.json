@@ -1,0 +1,341 @@
+{
+  "about": "Real-world detection cases (docs/INVESTIGATION_2026-11-08.md). Every confirmed failure becomes a case. Times are CLIP seconds of the capture's clip. truth: one row per chest opening (what: new_popup = a new pop-up appears, new_line = a chest line is added to a pop-up already on screen, multiplier = a line's X2/X3 changes) and per non-chest pop-up change that must NOT count (what: not_chest). type: chest | rare | sprite (the word on the line). Footage: research/cases.py fetch copies the needed segments into samples/cases/ (not in Git); tests/fixtures/popups/<case>.npz holds the pop-up box masks so tests/test_cases.py runs without footage.",
+  "cases": {
+    "thiefs_small_hud": {
+      "capture": "20261108_024147",
+      "clip": "video/clip_001.ffconcat",
+      "window": [
+        17.0,
+        34.0
+      ],
+      "source": "OBS Virtual Camera, Thiefs' Twitch stream",
+      "hud": 0.8,
+      "live": "0 counted (v0.2.1)",
+      "truth": [
+        {
+          "t": 21.33,
+          "what": "new_popup",
+          "type": "rare",
+          "text": "+900 XP / RARE CHEST"
+        },
+        {
+          "t": 24.93,
+          "what": "new_popup",
+          "type": "sprite",
+          "text": "+900 XP / SPRITE CHEST"
+        },
+        {
+          "t": 26.67,
+          "what": "new_line",
+          "type": "rare",
+          "text": "+1,800 XP / SPRITE CHEST / RARE CHEST"
+        },
+        {
+          "t": 28.27,
+          "what": "multiplier",
+          "type": "rare",
+          "text": "... / RARE CHEST X2"
+        },
+        {
+          "t": 30.0,
+          "what": "multiplier",
+          "type": "rare",
+          "text": "... / RARE CHEST X3"
+        }
+      ]
+    },
+    "replays_stack_x2_x3": {
+      "capture": "20261108_054841",
+      "clip": "video/clip_002.ffconcat",
+      "window": [
+        36.0,
+        45.0
+      ],
+      "source": "desktop capture of Replays' Twitch stream (fullscreen), normal HUD",
+      "hud": 1.0,
+      "live": "1 counted (E0034, APPROX, scale-aware x1.0); marks M003-M005 after each step",
+      "truth": [
+        {
+          "t": 39.33,
+          "what": "new_popup",
+          "type": "rare",
+          "text": "+900 XP / RARE CHEST"
+        },
+        {
+          "t": 40.33,
+          "what": "multiplier",
+          "type": "rare",
+          "text": "RARE CHEST X2"
+        },
+        {
+          "t": 42.0,
+          "what": "multiplier",
+          "type": "rare",
+          "text": "RARE CHEST X3"
+        }
+      ]
+    },
+    "replays_new_chest_line": {
+      "capture": "20261108_030211",
+      "clip": "video/clip_002.ffconcat",
+      "window": [
+        27.0,
+        34.0
+      ],
+      "source": "OBS Virtual Camera, Replays' stream, normal HUD",
+      "hud": 1.0,
+      "live": "2 counted (E0021, E0022 by the position-jump re-fire)",
+      "truth": [
+        {
+          "t": 29.0,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 30.67,
+          "what": "new_line",
+          "type": "chest",
+          "text": "+1,350 XP / CHEST / SPRITE LEVEL / CHEST"
+        }
+      ]
+    },
+    "replays_sprite_level_line": {
+      "capture": "20261108_030211",
+      "clip": "video/clip_003.ffconcat",
+      "window": [
+        95.0,
+        101.0
+      ],
+      "source": "OBS Virtual Camera, Replays' stream, normal HUD",
+      "hud": 1.0,
+      "live": "1 counted (E0063)",
+      "truth": [
+        {
+          "t": 97.0,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 98.67,
+          "what": "not_chest",
+          "text": "+750 XP / CHEST / SPRITE LEVEL"
+        }
+      ]
+    },
+    "replays_e0015_duplicate": {
+      "capture": "20261108_030211",
+      "clip": "video/clip_001.ffconcat",
+      "window": [
+        184.0,
+        191.5
+      ],
+      "source": "OBS Virtual Camera, Replays' stream, normal HUD",
+      "hud": 1.0,
+      "live": "3 counted (E0014, E0015, E0016): E0015 at 187.67 was during the unchanged first pop-up",
+      "truth": [
+        {
+          "t": 186.0,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 189.4,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        }
+      ]
+    },
+    "replays_six_chests": {
+      "capture": "20261108_054155",
+      "clip": "video/clip_001.ffconcat",
+      "window": [
+        0.0,
+        40.0
+      ],
+      "source": "desktop capture of Replays' Twitch stream (fullscreen), normal HUD",
+      "hud": 1.0,
+      "live": "6 counted (E0009-E0014); marks M001/M002 next to counted chests",
+      "truth": [
+        {
+          "t": 3.2,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 6.4,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 13.0,
+          "what": "new_popup",
+          "type": "sprite",
+          "text": "+900 XP / SPRITE CHEST"
+        },
+        {
+          "t": 18.0,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 25.0,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 35.03,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 36.1,
+          "what": "not_chest",
+          "text": "+1,500 XP / CHEST / NEW STORM PHASE"
+        },
+        {
+          "t": 38.77,
+          "what": "not_chest",
+          "text": "+200 XP / WEAKPOINT STREAK"
+        }
+      ]
+    },
+    "twitch_page_not_fullscreen": {
+      "capture": "20261108_054841",
+      "clip": "video/clip_001.ffconcat",
+      "window": [
+        0.0,
+        20.0
+      ],
+      "source": "desktop capture of the whole Twitch page: the player fills ~half the screen",
+      "hud": null,
+      "live": "0 counted; marks M001/M002",
+      "known_limitation": "the game picture does not fill the captured frame (browser not fullscreen); out of scope for the detector",
+      "truth": []
+    },
+    "replays_vault_five_chests": {
+      "capture": "20261108_030211",
+      "clip": "video/clip_003.ffconcat",
+      "window": [
+        108.0,
+        120.0
+      ],
+      "source": "OBS Virtual Camera, Replays' stream, normal HUD",
+      "hud": 1.0,
+      "live": "v0.2.1 replay: 4 counted (missed the first X2; a fire at 118.07 as the pop-up faded)",
+      "truth": [
+        {
+          "t": 110.4,
+          "what": "new_popup",
+          "type": "rare",
+          "text": "+900 XP / RARE CHEST"
+        },
+        {
+          "t": 111.6,
+          "what": "multiplier",
+          "type": "rare",
+          "text": "RARE CHEST X2"
+        },
+        {
+          "t": 113.6,
+          "what": "new_line",
+          "type": "sprite",
+          "text": "RARE CHEST X2 / SPRITE CHEST"
+        },
+        {
+          "t": 115.2,
+          "what": "new_line",
+          "type": "rare",
+          "text": "... / SPRITE CHEST / RARE CHEST"
+        },
+        {
+          "t": 116.4,
+          "what": "multiplier",
+          "type": "rare",
+          "text": "... / RARE CHEST X2 (third line)"
+        }
+      ]
+    },
+    "replays_chest_x2_late_exact": {
+      "capture": "20261108_030211",
+      "clip": "video/clip_002.ffconcat",
+      "window": [
+        12.0,
+        19.0
+      ],
+      "source": "OBS Virtual Camera, Replays' stream, normal HUD",
+      "hud": 1.0,
+      "live": "v0.2.1 replay: 2 counted (scale-aware 14.07 + a late exact fire 16.67 on the same pop-up)",
+      "truth": [
+        {
+          "t": 14.13,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 16.0,
+          "what": "multiplier",
+          "type": "chest",
+          "text": "+1,200 XP / CHEST X2"
+        }
+      ]
+    },
+    "replays_weakpoint_line": {
+      "capture": "20261108_030211",
+      "clip": "video/clip_002.ffconcat",
+      "window": [
+        305.0,
+        313.0
+      ],
+      "source": "OBS Virtual Camera, Replays' stream, normal HUD",
+      "hud": 1.0,
+      "live": "v0.2.1 replay: 2 counted (311.2 = the same chest again after WEAKPOINT STREAK was added)",
+      "truth": [
+        {
+          "t": 307.6,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST"
+        },
+        {
+          "t": 308.33,
+          "what": "not_chest",
+          "text": "+850 XP / CHEST / MAXIMUM AMMO"
+        },
+        {
+          "t": 310.2,
+          "what": "not_chest",
+          "text": "+1,050 XP / CHEST / MAXIMUM AMMO / WEAKPOINT STREAK"
+        }
+      ]
+    },
+    "replays_static_popup_refire": {
+      "capture": "20261108_030211",
+      "clip": "video/clip_003.ffconcat",
+      "window": [
+        73.5,
+        79.5
+      ],
+      "source": "OBS Virtual Camera, Replays' stream, normal HUD",
+      "hud": 1.0,
+      "live": "v0.2.1 replay: 2 counted (77.2 = the same unchanged pop-up again)",
+      "truth": [
+        {
+          "t": 75.4,
+          "what": "new_popup",
+          "type": "chest",
+          "text": "+600 XP / CHEST (unchanged until it fades)"
+        }
+      ]
+    }
+  }
+}

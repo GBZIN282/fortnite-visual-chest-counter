@@ -9,6 +9,8 @@ Frame source  ->  ChestEstimator.process_frame(t, frame)  ->  finished events
 Clues used (all existing detectors, parameters untouched):
   popup        word CHEST / BAU in the XP popup           (visual_detector.py)
                + scale-aware channel: CHEST drawn larger (bigger HUD), blurred match at smaller scales - APPROX only
+               + small-HUD channel: CHEST drawn smaller, a native small template - APPROX only
+               + stacked pop-ups: chests ADDED to a pop-up on screen (new line, X2, X3) - popup_lines.py
   sprite       "+75 CONTAINER OPENED" tag                  (sprite_detector.py)
   ammo         ammo-counter jumps = the local player fires (evidence.py)
   prompt       interaction-button icon + chest-object colours around it (evidence.py / object_cue.py)
@@ -26,7 +28,8 @@ Counting rules (see the constants below; all explicit and configurable):
                        (config), plus
                      - MEDIUM popups backed by a prompt + chest-object, plus
                      - prompt + chest-object events whose popup never fired, plus
-                     - scale-aware pop-ups (HUD drawn larger; exact match too low): MEDIUM, APPROX only.
+                     - scale-aware / small-HUD pop-ups (exact match too low): MEDIUM, APPROX only, plus
+                     - stacked steps: a chest line added (normal tier rules) or a multiplier step (APPROX only).
   never counted      LOW (e.g. MEDIUM while the player is shooting), generic prompts
                      (pickups, ammo crates, cannons...), anything else. They are still logged.
 """
@@ -36,9 +39,11 @@ from collections import Counter, deque
 
 import numpy as np
 
+from fortnite_chest_counter import paths
 from fortnite_chest_counter.detection import evidence
 from fortnite_chest_counter.detection import fusion
 from fortnite_chest_counter.detection import object_cue
+from fortnite_chest_counter.detection import popup_lines
 from fortnite_chest_counter.detection import sprite as sprite_detector
 from fortnite_chest_counter.detection import visual as V
 
@@ -100,6 +105,41 @@ SCALED_PREFILTER_PX = 60
 SCALED_WAIT = 2.0
 SCALED_LOCK_MIN = 0.84
 
+# Smaller HUD (docs/INVESTIGATION_2026-11-08.md). Thiefs' stream draws the HUD at ~0.8x: the chest word is 22 px wide, the
+# exact match stays at 0.21-0.32 and every chest was missed. Enlarging the picture was rejected: a Portuguese combat
+# pop-up reached 0.806 at x1.25 against 0.81-0.83 for the real chests, and it cost ~34 ms per frame. This channel matches
+# a CHEST word cut at its NATIVE small size (templates/chest/en/chest_small.npy, 22 x 7 px, from that stream):
+#   - candidate: exact match >= SMALL_TRIGGER and the blurred match at that place >= SMALL_CONFIRM (real small-HUD
+#     chests: exact 0.82-1.00 / blurred 0.91-1.00; everything else on the reference footage: <= 0.62 / <= 0.87)
+#   - the scale-aware channel's rules: English word only, 60 px prefilter, the exact path owns any pop-up it fires on
+#     within SCALED_WAIT, counted APPROX ONLY (MEDIUM), never CERTAIN
+#   - no longer searched once the session's HUD scale is known to be normal or larger (scale vote)
+SMALL_HUD_POPUPS = True
+SMALL_TEMPLATE_FILE = "chest/en/chest_small.npy"
+SMALL_SCALE = 1.25                 # its picture-scale equivalent, for the session's HUD-scale vote
+SMALL_TRIGGER = 0.75
+SMALL_CONFIRM = 0.90
+SMALL_REARM = 0.50
+# Where the small word is searched (normalized frame pixels): the pop-up keeps its place when the HUD is smaller (Thiefs'
+# word at x 889-910, y 228-234 against 885-911, 229-235), so a box around it is enough - a third of the pop-up box's work.
+SMALL_SEARCH_BOX = (800, 170, 1010, 300)
+
+# Stacked pop-ups (detection/popup_lines.py). While a pop-up is on screen Fortnite ADDS the next chest to it (a new
+# "... CHEST" line, or "X2" / "X3" after the word) instead of showing a new pop-up. Before v0.2.2 only a new line could be
+# counted, by the exact path's "position jumped" re-fire - which also counted the SAME chest again when a non-chest line
+# (SPRITE LEVEL) pushed the word up, or when the scale-in animation moved it by 8 px (live E0015). For the English word
+# the pop-up tracker replaces that re-fire: it counts only a real content change (a chest line added, a multiplier
+# appearing or changing, each with a change of the XP total). A new chest line keeps the normal tier rules, as the re-fire
+# did; a multiplier step and every step of a scale-aware / small-HUD pop-up count APPROX only. The Portuguese word keeps
+# the position re-fire (no stacked Portuguese footage yet).
+STACKED_POPUPS = True
+STACKED_LINE_MIN = 0.75            # chest-line score (blurred) of the normal word; non-chest lines scored <= 0.70
+STACKED_LINE_MIN_SMALL = 0.85      # ...of the small word ("SPRITE" scores 0.81 against it)
+# An exact-path onset on the pop-up the tracker is already following, after that pop-up was counted (by the scale-aware
+# or small channel, or by an earlier exact onset), is the SAME pop-up - not a chest. v0.2.1 counted it: on Replays' stream
+# a "+600 XP / CHEST" counted by the scale-aware channel at 14.07 s was counted again when the exact match first passed
+# 0.75 at 16.67 s (it only looked right because the pop-up had become "CHEST X2" - which the tracker now counts).
+
 # Prompt + chest-object events whose popup never fired: counted as APPROX only, never CERTAIN.
 INTERACTION_ONLY_COUNTS_APPROX = True
 INTERACTION_CAN_BE_CERTAIN = False
@@ -148,11 +188,11 @@ class OnsetDetector:
         self.high, self.low, self.use_position = high, low, use_position
         self.events, self.armed, self.low_since, self.last_pos = [], True, None, None
 
-    def update(self, t, score, y=0, x=0):
+    def update(self, t, score, y=0, x=0, allow_jump=True):
         fired = False
         spaced = not self.events or t - self.events[-1] >= V.EVENT_MIN_SEPARATION_SECONDS
         if score >= self.high:
-            jumped = (self.use_position and self.last_pos is not None
+            jumped = (self.use_position and allow_jump and self.last_pos is not None
                       and max(abs(y - self.last_pos[0]), abs(x - self.last_pos[1])) >= V.EVENT_POSITION_JUMP_PIXELS)
             if spaced and (self.armed or jumped):
                 self.events.append(t)
@@ -180,8 +220,8 @@ def adjust_tier(base_tier, shooting, interaction):
 
 
 class ChestEstimator:
-    def __init__(self, scale_aware=None):
-        """scale_aware: None = SCALE_AWARE_POPUPS; False / True to compare both (tests, research)."""
+    def __init__(self, scale_aware=None, small_hud=None, stacked=None):
+        """scale_aware / small_hud / stacked: None = the module constants; False / True to compare (tests, research)."""
         self.templates = [t for t in V.load_templates() if t["id"].split(":")[0] in ENABLED_LANGUAGES]
         if not self.templates:
             raise ValueError(f"no chest-word template for languages {sorted(ENABLED_LANGUAGES)}; "
@@ -209,7 +249,21 @@ class ChestEstimator:
         self.exact_onsets = deque()
         self.scale_votes, self.scale_locked = Counter(), None
         self.scaled_stats = {"prefilter_pass": 0, "onsets": 0, "dropped_for_exact": 0, "search_ms_total": 0.0,
-                             "search_ms_max": 0.0}
+                             "search_ms_max": 0.0, "small_onsets": 0, "small_searches": 0, "stacked_changes": 0,
+                             "stacked_rejected_no_xp": 0, "tracker_ms_total": 0.0}
+        english = "en:CHEST" in self.robust_templates and APPROX_COUNTS_MEDIUM_ALONE.get("en:CHEST", False)
+        self.small = None
+        if (SMALL_HUD_POPUPS if small_hud is None else small_hud) and english:
+            tpl = np.load(paths.TEMPLATES_DIR / SMALL_TEMPLATE_FILE).astype(np.float32)
+            self.small = {"array": tpl, "blur": V.blur_template(tpl, ROBUST_SIGMA)}
+        self.small_onset = OnsetDetector(SMALL_TRIGGER, SMALL_REARM, False)
+        self.stacked = bool((STACKED_POPUPS if stacked is None else stacked) and "en:CHEST" in self.robust_templates)
+        self.trackers = {}                 # "normal" / "small" -> popup_lines.PopupTracker
+        self.tracking = None               # the key of the tracker following the pop-up on screen
+        self.tracked_scaled = None         # {"blur", "scale"} when that pop-up came from a scale-aware / small channel
+        self.robust_hist = deque()         # (t, {template: blurred match}) while a pop-up is followed (stacked steps)
+        self.tracked_run = None            # the tracker run (one per pop-up) of the pop-up on screen...
+        self.tracked_counted = False       # ...and whether that pop-up has already been counted
 
     # ------------------------------------------------------------------ per frame
     def process_frame(self, t, frame):
@@ -247,30 +301,96 @@ class ChestEstimator:
         score, y, x, k = best
         self.popup_hist.append((t, score, y, x, k if score > 0 else -1))
         for p in self.pending_popups:                       # keep the peak over the first second
-            if t <= p["onset"] + POPUP_FINISH_DELAY and score > p["score"]:
+            if t <= p.get("until", p["onset"] + POPUP_FINISH_DELAY) and score > p["score"]:
                 p.update(score=score, y=y, x=x, template=self.templates[k]["id"])
                 if SAVE_SNAPSHOTS:
                     p["roi"] = roi.copy()
-        exact_fired = self.popup.update(t, score, y, x)
+        word = self.templates[k]["id"] if score > 0 else "-"
+        exact_fired = self.popup.update(t, score, y, x, allow_jump=not (self.stacked and word == "en:CHEST"))
+        if exact_fired and word == "en:CHEST" and self._same_popup_counted():
+            exact_fired = False                              # the pop-up on screen, already counted: not a new chest
+            self.scaled_stats["exact_same_popup"] = self.scaled_stats.get("exact_same_popup", 0) + 1
+            self.exact_onsets.append(t)                      # ...but it still owns any blurred onset near it
         if exact_fired:
-            self.pending_popups.append({"onset": t, "score": score, "y": y, "x": x,
-                                        "template": self.templates[k]["id"] if score > 0 else "-"})
+            self.pending_popups.append({"onset": t, "score": score, "y": y, "x": x, "template": word})
             if SAVE_SNAPSHOTS:
                 self.pending_popups[-1]["roi"] = roi.copy()
+            if word == "en:CHEST":
+                self._track(t, "normal", None, (y, x))
         # Compression-robust glyph score, only while a popup is being evaluated (cheap: ~15 frames per popup).
-        live = [p for p in self.pending_popups if t <= p["onset"] + POPUP_FINISH_DELAY]
-        if live and ROBUST_PROMOTION and where:
+        live = [p for p in self.pending_popups if t <= p.get("until", p["onset"] + POPUP_FINISH_DELAY)]
+        tracked = self.stacked and self.tracking is not None and self.trackers[self.tracking].active
+        if (live or tracked) and ROBUST_PROMOTION and where:
+            frame_r = {}
             for tpl in self.templates:
                 # Only around the exact match's position (+-8 px): the confirmation must come from the SAME glyph, and
                 # it costs ~1 ms instead of ~12 ms for the whole popup region.
                 (y0, x0), (h, w) = where[tpl["id"]], tpl["array"].shape
                 crop = mask[max(0, y0 - ROBUST_SEARCH_PX):y0 + h + ROBUST_SEARCH_PX, max(0, x0 - ROBUST_SEARCH_PX):x0 + w + ROBUST_SEARCH_PX]
                 r = V.robust_correlation(crop, self.robust_templates[tpl["id"]], ROBUST_SIGMA)
+                frame_r[tpl["id"]] = r
                 for p in live:
                     best_r = p.setdefault("robust", {})
                     best_r[tpl["id"]] = max(best_r.get(tpl["id"], 0.0), r)
-        if self.scaled_templates:
+            if tracked:
+                self.robust_hist.append((t, frame_r))
+        while self.robust_hist and self.robust_hist[0][0] < t - 4.0:
+            self.robust_hist.popleft()
+        if self.scaled_templates or self.small is not None:
             self._scaled_popup(t, roi, mask, exact_fired)
+        if self.stacked and self.tracking is not None:
+            self._stacked(t, roi, mask)
+
+    # ------------------------------------------------------------------ stacked pop-ups (STACKED_POPUPS)
+    def _same_popup_counted(self):
+        return (self.stacked and self.tracking is not None and self.trackers[self.tracking].active
+                and self.trackers[self.tracking].run == self.tracked_run and self.tracked_counted)
+
+    def _track(self, t, key, scaled, center):
+        """A pop-up onset: follow its content from now on (one pop-up at a time; the one on screen keeps its tracker).
+        center = (y, x) of the matched word in pop-up box pixels."""
+        if not self.stacked:
+            return None
+        if self.tracking is not None and self.trackers[self.tracking].active:
+            if key == "normal" and scaled is None and self.tracking == "normal":
+                self.tracked_scaled = None             # the exact path claimed this pop-up: its steps follow its rules
+                self.tracked_counted = True
+            return self.trackers[self.tracking].run
+        if key not in self.trackers:
+            if key == "small":
+                tpl, line_min = self.small["array"], STACKED_LINE_MIN_SMALL
+            else:
+                tpl, line_min = next(x["array"] for x in self.templates if x["id"] == "en:CHEST"), STACKED_LINE_MIN
+            self.trackers[key] = popup_lines.PopupTracker(tpl, line_min, SAMPLE_FPS)
+        self.trackers[key].start(t, center)
+        self.tracking, self.tracked_scaled = key, scaled
+        self.tracked_run, self.tracked_counted = self.trackers[key].run, scaled is None    # an exact onset counts at once
+        return self.tracked_run
+
+    def _stacked(self, t, roi, mask):
+        tracker = self.trackers[self.tracking]
+        a = time.perf_counter()
+        before = tracker.rejected_without_xp
+        change = tracker.update(t, mask)
+        self.scaled_stats["tracker_ms_total"] += 1000 * (time.perf_counter() - a)
+        self.scaled_stats["stacked_rejected_no_xp"] += tracker.rejected_without_xp - before
+        if not tracker.active:
+            self.tracking = None
+        if change is None:
+            return
+        self.scaled_stats["stacked_changes"] += 1
+        since = [h for h in self.popup_hist if h[0] >= change["t"]] or list(self.popup_hist)[-1:]
+        score, y, x = max(since, key=lambda h: h[1])[1:4] if since else (0.0, 0, 0)   # its frames since the change began
+        popup = {"onset": float(change["t"]), "until": t + POPUP_FINISH_DELAY, "score": score, "y": y, "x": x,
+                 "template": "en:CHEST", "increment": {k: (float(v) if k == "t" else v) for k, v in change.items()}}
+        robust = [r.get("en:CHEST", 0.0) for tt, r in self.robust_hist if tt >= change["t"]]
+        if robust:                                           # its compression-robust match since the change began
+            popup["robust"] = {"en:CHEST": max(robust)}
+        if self.tracked_scaled is not None:
+            popup["scaled"] = dict(self.tracked_scaled)
+        if SAVE_SNAPSHOTS:
+            popup["roi"] = roi.copy()
+        self.pending_popups.append(popup)
 
     # ------------------------------------------------------------------ scale-aware pop-ups (SCALE_AWARE_POPUPS)
     def _scaled_popup(self, t, roi, mask, exact_fired):
@@ -283,17 +403,24 @@ class ChestEstimator:
         while self.exact_onsets and self.exact_onsets[0] < t - SCALED_WAIT - 1.0:
             self.exact_onsets.popleft()
         best = (0.0, 0, 0, 1.0, None)
+        small = (0.0, 0.0, 0, 0)
         if mask.sum() >= SCALED_PREFILTER_PX:
             a = time.perf_counter()
-            best = self._scaled_best(roi, mask)
+            if self.scaled_templates and self.scale_locked != SMALL_SCALE:
+                best = self._scaled_best(roi, mask)
+            if self.small is not None and (self.scale_locked is None or self.scale_locked == SMALL_SCALE):
+                small = self._small_best(mask)
+                self.scaled_stats["small_searches"] += 1
             ms = 1000 * (time.perf_counter() - a)
             st = self.scaled_stats
             st["prefilter_pass"] += 1
             st["search_ms_total"] += ms
             st["search_ms_max"] = max(st["search_ms_max"], ms)
+        if self.small is not None:
+            self._small_popup(t, roi, small)
         score, cy, cx, s, tid = best
         for p in self.pending_scaled:                       # keep the peak over the pop-up's first second
-            if t <= p["onset"] + POPUP_FINISH_DELAY and score > p["blur"]:
+            if not p.get("small") and t <= p["onset"] + POPUP_FINISH_DELAY and score > p["blur"]:
                 p.update(blur=score, scale=s, y=cy, x=cx)
                 if SAVE_SNAPSHOTS:
                     p["roi"] = roi.copy()
@@ -304,14 +431,52 @@ class ChestEstimator:
                 if SAVE_SNAPSHOTS:
                     self.pending_scaled[-1]["roi"] = roi.copy()
                 self.scaled_stats["onsets"] += 1
+                if s == 1.0:
+                    self.pending_scaled[-1]["run"] = self._track(t, "normal", {"blur": score, "scale": s}, (cy, cx))
         for p in list(self.pending_scaled):                 # not claimed by the exact path in time -> a pop-up
             if t >= p["onset"] + SCALED_WAIT:
                 self.pending_scaled.remove(p)
                 self._promote_scaled(p)
 
+    def _small_best(self, mask):
+        """Native small-HUD word: exact match, confirmed by the blurred match at the same place -> (gated exact score,
+        blurred score, centre y, centre x). Without the confirmation the score is held just under the trigger."""
+        tpl = self.small["array"]
+        bx0, by0, bx1, by1 = SMALL_SEARCH_BOX
+        oy, ox = by0 - V.ROI_Y, bx0 - V.ROI_X
+        mask = mask[oy:by1 - V.ROI_Y, ox:bx1 - V.ROI_X]
+        if mask.sum() < 20:
+            return 0.0, 0.0, 0, 0
+        exact, y, x = V.best_template_correlation(mask, tpl)
+        th, tw = tpl.shape
+        blur = 0.0
+        if exact >= SMALL_TRIGGER:
+            blur = V.robust_correlation(mask[max(0, y - 3):y + th + 3, max(0, x - 3):x + tw + 3], self.small["blur"],
+                                        ROBUST_SIGMA)
+            if blur < SMALL_CONFIRM:
+                exact = min(exact, SMALL_TRIGGER - 0.01)
+        return exact, blur, oy + y + th // 2, ox + x + tw // 2
+
+    def _small_popup(self, t, roi, small):
+        exact, blur, cy, cx = small
+        for p in self.pending_scaled:                       # keep the peak over the pop-up's first second
+            if p.get("small") and t <= p["onset"] + POPUP_FINISH_DELAY and blur > p["blur"] and exact >= SMALL_TRIGGER:
+                p.update(blur=blur, exact_small=exact, y=cy, x=cx)
+        if self.small_onset.update(t, exact, cy, cx):
+            if not any(abs(o - t) <= SCALED_WAIT for o in self.exact_onsets) and \
+                    not any(abs(p["onset"] - t) <= POPUP_FINISH_DELAY for p in self.pending_popups):
+                self.pending_scaled.append({"onset": t, "blur": blur, "exact_small": exact, "scale": SMALL_SCALE,
+                                            "y": cy, "x": cx, "template": "en:CHEST", "small": True})
+                if SAVE_SNAPSHOTS:
+                    self.pending_scaled[-1]["roi"] = roi.copy()
+                self.scaled_stats["small_onsets"] += 1
+                self.pending_scaled[-1]["run"] = self._track(t, "small", {"blur": blur, "scale": SMALL_SCALE}, (cy, cx))
+
     def _scaled_scales(self):
         if self.scale_locked is None:
             return SCALED_SCALES
+        if self.scale_locked not in SCALED_SCALES:
+            return ()
         i = SCALED_SCALES.index(self.scale_locked)
         return SCALED_SCALES[max(0, i - 1):i + 2]
 
@@ -331,10 +496,14 @@ class ChestEstimator:
 
     def _promote_scaled(self, p):
         """A blurred onset the exact path did not claim becomes a pending pop-up (finished and counted like any other)."""
+        if p.get("run") is not None and p["run"] == self.tracked_run:
+            self.tracked_counted = True
         exact_peak = max((h[1] for h in self.popup_hist if p["onset"] <= h[0] <= p["onset"] + POPUP_FINISH_DELAY),
                          default=0.0)
         popup = {"onset": p["onset"], "score": exact_peak, "y": p["y"], "x": p["x"], "template": p["template"],
                  "scaled": {"blur": p["blur"], "scale": p["scale"]}}
+        if p.get("small"):
+            popup["scaled"]["exact_small"] = p.get("exact_small", 0.0)
         if "roi" in p:
             popup["roi"] = p["roi"]
         self.pending_popups.append(popup)
@@ -391,7 +560,7 @@ class ChestEstimator:
     def _finish(self, t, final):
         out = []
         for p in list(self.pending_popups):
-            if final or p["onset"] + POPUP_FINISH_DELAY <= t:
+            if final or p.get("until", p["onset"] + POPUP_FINISH_DELAY) <= t:
                 self.pending_popups.remove(p)
                 out.append(self._popup_event(p))
         for i in list(self.pending_interactions):
@@ -466,18 +635,39 @@ class ChestEstimator:
             elif APPROX_MEDIUM_WITH_OBJECT_SUPPORT and support is not None:
                 approx, reason = True, reason + f"; MEDIUM counted approx: chest-object prompt support ({support[0]:.2f})"
         scaled = p.get("scaled")
-        if scaled is not None:
+        inc = p.get("increment")
+        if scaled is not None and scaled["scale"] > 1.0:
+            # HUD drawn smaller: a native small-word match; the normal word's exact score says nothing here. APPROX only.
+            adjusted, certain, approx = "MEDIUM", False, True
+            reason = (f"small-HUD pop-up: native small CHEST match {scaled.get('exact_small', 0.0):.2f} / blurred "
+                      f"{scaled['blur']:.2f} (HUD drawn ~0.8x; normal-word match {p['score']:.2f}) -> MEDIUM, counted "
+                      f"approx only (never CERTAIN)")
+        elif scaled is not None:
             # HUD drawn larger: the exact score says nothing here, so the tier rules above do not apply. APPROX only.
             adjusted, certain, approx = "MEDIUM", False, True
             reason = (f"scale-aware pop-up: blurred {p['template']} match {scaled['blur']:.2f} at x{scaled['scale']} "
                       f"(exact match {p['score']:.2f}; HUD drawn larger) -> MEDIUM, counted approx only (never CERTAIN)")
-        if self.scaled_templates:
+        if inc is not None:
+            step = {"new_line": "a chest line was added to the pop-up on screen",
+                    "multiplier": "the chest line's multiplier " + ("appeared (X2)" if inc.get("change") == "appeared"
+                                                                     else "went up")}[inc["kind"]]
+            step += " and its XP total changed"
+            if inc["kind"] == "multiplier" or scaled is not None or p["score"] < V.EVENT_HIGH_THRESHOLD:
+                # a multiplier step, a step of a scale-aware / small pop-up, or a new line whose word never matched the
+                # exact template (>= 0.75, what v0.2.1's re-fire needed): the tracker saw it, but APPROX only
+                adjusted, certain, approx = "MEDIUM", False, True
+                reason = f"stacked pop-up: {step} -> MEDIUM, counted approx only"
+            else:
+                reason = f"stacked pop-up: {step}; " + reason
+        if (self.scaled_templates or self.small is not None) and inc is None:
             self._vote_scale(p)
         if not approx:
             reason += "; NOT counted"
         extra = {"_snapshot": p["roi"]} if "roi" in p else {}
         if scaled is not None:
             extra["scaled_popup"] = {"blur": round(float(scaled["blur"]), 3), "scale": scaled["scale"]}
+        if inc is not None:
+            extra["increment"] = {k: (round(v, 3) if isinstance(v, float) else v) for k, v in inc.items()}
         return {**extra, "time": onset, "source": "fused" if merged is not None else "popup",
                 "base_tier": base_tier, "adjusted_tier": adjusted,
                 "popup_score": p["score"], "popup_template": p["template"],

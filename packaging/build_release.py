@@ -44,7 +44,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from fortnite_chest_counter.version import APP_NAME, __version__     # noqa: E402
 
 PACKAGE = "fortnite_chest_counter"
-TEMPLATE_FILES = ["chest/en/chest.npy", "chest/pt/bau.npy", "container_opened.npy", "ui/interaction_disc.npy",
+TEMPLATE_FILES = ["chest/en/chest.npy", "chest/en/chest_small.npy", "chest/pt/bau.npy", "container_opened.npy", "ui/interaction_disc.npy",
                   "ui/interaction_ring.npy"]                    # audio_fingerprint.npy is development-only
 THIRD_PARTY = ["numpy", "scipy"]
 # Livestream URL input (v0.2.1): Streamlink and its complete dependency closure on Windows / Python 3.13 (BSD / MIT /

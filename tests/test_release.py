@@ -241,9 +241,9 @@ def _word_frames(scale, on=(1.0, 3.0), total=6.0, shift_at=None):
         yield t, frame
 
 
-def _run_estimator(frames, scale_aware):
+def _run_estimator(frames, scale_aware, **channels):
     estimator.configure(DEFAULTS["detector"])
-    est = estimator.ChestEstimator(scale_aware=scale_aware)
+    est = estimator.ChestEstimator(scale_aware=scale_aware, **channels)
     events = []
     for t, frame in frames:
         events += est.process_frame(t, frame)
@@ -261,12 +261,15 @@ def test_scale_aware_popup_counts_a_larger_hud_word_as_approx_only():
 
 def test_scale_aware_channel_leaves_normal_popups_and_back_to_back_refires_unchanged():
     keys = ("time", "source", "base_tier", "adjusted_tier", "popup_score", "certain_counted", "approx_counted", "reason")
-    frames = dict(scale=1.0, on=(1.0, 4.0), total=7.0, shift_at=2.3)                  # exact path re-fires on the jump
-    off = _run_estimator(_word_frames(**frames), scale_aware=False)
-    on = _run_estimator(_word_frames(**frames), scale_aware=True)
-    assert len(off) == 2 and all(e["certain_counted"] for e in off)
-    assert [{k: e[k] for k in keys} for e in on] == [{k: e[k] for k in keys} for e in off]
-    assert not any("scaled_popup" in e for e in on)
+    frames = dict(scale=1.0, on=(1.0, 4.0), total=7.0, shift_at=2.3)                  # the word jumps 24 px, nothing else
+    for stacked, count in ((False, 2), (True, 1)):
+        # v0.2.1 (stacked=False) re-fired on the jump; v0.2.2 counts a pop-up again only when its content changes (a
+        # chest line, a multiplier, the XP total: tests/test_cases.py) - a word that only moves was the duplicate seen live
+        off = _run_estimator(_word_frames(**frames), scale_aware=False, stacked=stacked)
+        on = _run_estimator(_word_frames(**frames), scale_aware=True, stacked=stacked)
+        assert len(off) == count and all(e["certain_counted"] for e in off)
+        assert [{k: e[k] for k in keys} for e in on] == [{k: e[k] for k in keys} for e in off]
+        assert not any("scaled_popup" in e for e in on)
 
 
 def test_scale_aware_popup_is_counted_once_when_a_stacked_line_moves_it():
