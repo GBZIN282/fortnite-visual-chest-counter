@@ -40,6 +40,7 @@ from collections import Counter, deque
 import numpy as np
 
 from fortnite_chest_counter import paths
+from fortnite_chest_counter.detection import chest_types
 from fortnite_chest_counter.detection import evidence
 from fortnite_chest_counter.detection import fusion
 from fortnite_chest_counter.detection import object_cue
@@ -135,6 +136,13 @@ SMALL_SEARCH_BOX = (800, 170, 1010, 300)
 STACKED_POPUPS = True
 STACKED_LINE_MIN = 0.75            # chest-line score (blurred) of the normal word; non-chest lines scored <= 0.70
 STACKED_LINE_MIN_SMALL = 0.85      # ...of the small word ("SPRITE" scores 0.81 against it)
+
+# Chest types (detection/chest_types.py): every counted chest is labelled with the type of ITS pop-up line - the line of a
+# new pop-up (its newest line), the added line, or the line whose multiplier went up - from the per-frame readings while
+# the pop-up stays on screen. A label never changes CERTAIN / APPROX. A label that becomes clearer after the chest was
+# counted is sent as a type update (take_type_updates) and changes only the type statistics. Chests without a tracked
+# line (Portuguese word, larger HUD, prompt-only events) are "unknown".
+CHEST_TYPES = True
 # An exact-path onset on the pop-up the tracker is already following, after that pop-up was counted (by the scale-aware
 # or small channel, or by an earlier exact onset), is the SAME pop-up - not a chest. v0.2.1 counted it: on Replays' stream
 # a "+600 XP / CHEST" counted by the scale-aware channel at 14.07 s was counted again when the exact match first passed
@@ -262,6 +270,9 @@ class ChestEstimator:
         self.tracking = None               # the key of the tracker following the pop-up on screen
         self.tracked_scaled = None         # {"blur", "scale"} when that pop-up came from a scale-aware / small channel
         self.robust_hist = deque()         # (t, {template: blurred match}) while a pop-up is followed (stacked steps)
+        self.runs = {}                     # (tracker key, run) -> that pop-up's line votes (chest types)
+        self.open_labels = []              # (event, slot): counted chests whose pop-up is still on screen
+        self.type_updates = []             # labels that changed after their chest was counted
         self.tracked_run = None            # the tracker run (one per pop-up) of the pop-up on screen...
         self.tracked_counted = False       # ...and whether that pop-up has already been counted
 
@@ -276,6 +287,8 @@ class ChestEstimator:
             self._prompt(t, frame)
         self.frame_index += 1
         self._trim(t)
+        if self.open_labels:
+            self._refresh_labels()
         return self._finish(t, final=False)
 
     def flush(self):
@@ -283,7 +296,9 @@ class ChestEstimator:
         for p in self.pending_scaled:
             self._promote_scaled(p)
         self.pending_scaled = []
-        return self._finish(self.now, final=True)
+        out = self._finish(self.now, final=True)
+        self._refresh_labels(final=True)
+        return out
 
     # ------------------------------------------------------------------ clue updates
     def _popup(self, t, frame):
@@ -316,7 +331,9 @@ class ChestEstimator:
             if SAVE_SNAPSHOTS:
                 self.pending_popups[-1]["roi"] = roi.copy()
             if word == "en:CHEST":
-                self._track(t, "normal", None, (y, x))
+                run = self._track(t, "normal", None, (y, x))
+                if run is not None:
+                    self.pending_popups[-1]["slot"] = (self.tracking, run, "first")
         # Compression-robust glyph score, only while a popup is being evaluated (cheap: ~15 frames per popup).
         live = [p for p in self.pending_popups if t <= p.get("until", p["onset"] + POPUP_FINISH_DELAY)]
         tracked = self.stacked and self.tracking is not None and self.trackers[self.tracking].active
@@ -362,7 +379,15 @@ class ChestEstimator:
             else:
                 tpl, line_min = next(x["array"] for x in self.templates if x["id"] == "en:CHEST"), STACKED_LINE_MIN
             self.trackers[key] = popup_lines.PopupTracker(tpl, line_min, SAMPLE_FPS)
+            if CHEST_TYPES:
+                prefixes = chest_types.load_prefixes(key)
+                th, tw = tpl.shape
+                self.trackers[key].classify = lambda m, ln, p=prefixes, h=th, w=tw: chest_types.classify_line(
+                    m, ln.y, ln.x, h, w, p)[0]
         self.trackers[key].start(t, center)
+        self.runs[(key, self.trackers[key].run)] = self.trackers[key].info
+        while len(self.runs) > 50:
+            self.runs.pop(next(iter(self.runs)))
         self.tracking, self.tracked_scaled = key, scaled
         self.tracked_run, self.tracked_counted = self.trackers[key].run, scaled is None    # an exact onset counts at once
         return self.tracked_run
@@ -388,11 +413,52 @@ class ChestEstimator:
             popup["robust"] = {"en:CHEST": max(robust)}
         if self.tracked_scaled is not None:
             popup["scaled"] = dict(self.tracked_scaled)
+        popup["slot"] = (self.tracking, tracker.run, change.get("line"))
         if SAVE_SNAPSHOTS:
             popup["roi"] = roi.copy()
         self.pending_popups.append(popup)
 
     # ------------------------------------------------------------------ scale-aware pop-ups (SCALE_AWARE_POPUPS)
+    # ------------------------------------------------------------------ chest types (CHEST_TYPES)
+    def _label(self, slot):
+        """slot (tracker key, run, line index | "first") -> (type, confidence, evidence)."""
+        if slot is None or not CHEST_TYPES:
+            return chest_types.UNKNOWN, 0.0, {"read": "no tracked pop-up line"}
+        key, run, line = slot
+        info = self.runs.get((key, run))
+        if info is None:
+            return chest_types.UNKNOWN, 0.0, {"read": "pop-up no longer known"}
+        if line == "first":                                  # a new pop-up's newest line (its only one, usually)
+            if info["first_count"] is not None:
+                line = info["first_count"] - 1
+            else:                                            # it never stood still: the newest line that was read
+                line = max(info["votes"]) if info["votes"] else None
+        if line is None:
+            return chest_types.UNKNOWN, 0.0, {"read": "line not settled yet", "hud": key}
+        votes = info["votes"].get(line, Counter())
+        kind, confidence = chest_types.decide(votes)
+        return kind, confidence, {"line": line, "hud": key, "votes": dict(votes)}
+
+    def _refresh_labels(self, final=False):
+        """Counted chests whose pop-up is still followed: if their line's type became clearer, update the label."""
+        keep = []
+        for ev, slot in self.open_labels:
+            kind, confidence, evidence = self._label(slot)
+            if kind != ev["chest_type"] and (kind != chest_types.UNKNOWN or final):
+                if kind != chest_types.UNKNOWN:
+                    self.type_updates.append({"time": ev["time"], "chest_type": kind, "previous": ev["chest_type"],
+                                              "type_confidence": confidence, "type_evidence": evidence})
+                    ev.update(chest_type=kind, type_confidence=confidence, type_evidence=evidence, type_refined=True)
+            tracker = self.trackers.get(slot[0])
+            if not final and tracker is not None and tracker.active and tracker.run == slot[1]:
+                keep.append((ev, slot))
+        self.open_labels = keep
+
+    def take_type_updates(self):
+        """Labels that changed after their chest was counted -> [{"time", "chest_type", "previous", ...}], then cleared."""
+        out, self.type_updates = self.type_updates, []
+        return out
+
     def _scaled_popup(self, t, roi, mask, exact_fired):
         """Second pop-up channel, after the exact path of the same frame. Only adds pop-ups the exact path did not find."""
         if exact_fired:                                     # the exact path owns this pop-up: drop blurred onsets near it
@@ -504,6 +570,8 @@ class ChestEstimator:
                  "scaled": {"blur": p["blur"], "scale": p["scale"]}}
         if p.get("small"):
             popup["scaled"]["exact_small"] = p.get("exact_small", 0.0)
+        if p.get("run") is not None:
+            popup["slot"] = ("small" if p.get("small") else "normal", p["run"], "first")
         if "roi" in p:
             popup["roi"] = p["roi"]
         self.pending_popups.append(popup)
@@ -664,11 +732,13 @@ class ChestEstimator:
         if not approx:
             reason += "; NOT counted"
         extra = {"_snapshot": p["roi"]} if "roi" in p else {}
+        kind, confidence, type_evidence = self._label(p.get("slot"))
+        extra.update(chest_type=kind, type_confidence=confidence, type_evidence=type_evidence)
         if scaled is not None:
             extra["scaled_popup"] = {"blur": round(float(scaled["blur"]), 3), "scale": scaled["scale"]}
         if inc is not None:
             extra["increment"] = {k: (round(v, 3) if isinstance(v, float) else v) for k, v in inc.items()}
-        return {**extra, "time": onset, "source": "fused" if merged is not None else "popup",
+        event = {**extra, "time": onset, "source": "fused" if merged is not None else "popup",
                 "base_tier": base_tier, "adjusted_tier": adjusted,
                 "popup_score": p["score"], "popup_template": p["template"],
                 "interaction_score": max(interaction_score, merged["score"] if merged else 0.0),
@@ -676,6 +746,11 @@ class ChestEstimator:
                 "sprite_present": sprite_present, "audio_present": None, "shooting_negative": shooting,
                 "ammo_steps": steps, "robust_score": round(robust, 3), "popup_trace": self._popup_trace(p),
                 "certain_counted": certain, "approx_counted": approx, "reason": reason}
+        slot = p.get("slot")
+        tracker = self.trackers.get(slot[0]) if slot else None
+        if approx and tracker is not None and tracker.active and tracker.run == slot[1]:
+            self.open_labels.append((event, slot))          # its pop-up is still on screen: the label may still improve
+        return event
 
     def _interaction_event(self, i):
         tp = i["t"]
@@ -690,7 +765,9 @@ class ChestEstimator:
                       f"no popup merged" + ("" if counted else "; NOT counted"))
         else:
             reason = f"prompt {i['score']:.2f} but no chest-like object: generic container/pickup, NOT counted"
-        return {"time": tp, "source": "interaction_object", "base_tier": "-", "adjusted_tier": "-",
+        return {"chest_type": chest_types.UNKNOWN, "type_confidence": 0.0,
+                "type_evidence": {"read": "no pop-up (prompt + chest-like object only)"},
+                "time": tp, "source": "interaction_object", "base_tier": "-", "adjusted_tier": "-",
                 "popup_score": None, "popup_template": None, "interaction_score": i["score"],
                 "chest_object_gold": best[2] if best else None, "chest_object_gem": best[3] if best else None,
                 "sprite_present": False, "audio_present": None, "shooting_negative": shooting, "ammo_steps": steps,

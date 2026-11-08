@@ -43,6 +43,7 @@ from pathlib import Path
 import numpy as np
 
 from fortnite_chest_counter.console import CONSOLE
+from fortnite_chest_counter.detection import chest_types
 from fortnite_chest_counter.detection import fusion
 from fortnite_chest_counter import paths
 from fortnite_chest_counter import profiles
@@ -90,9 +91,40 @@ def mmss(seconds):
 # STATE (always plain integers; formatting happens only for display)
 # ==================================================================
 
+def fresh_types():
+    return {kind: {"certain": 0, "approx": 0} for kind in (*chest_types.KNOWN, chest_types.UNKNOWN)}
+
+
 def fresh_state():
     return {"certain": 0, "approximate": 0, "events_logged": 0, "last_event_id": None, "last_event": None,
-            "session_started_at": now_iso(), "updated_at": now_iso(), "last_processed_time": 0.0}
+            "session_started_at": now_iso(), "updated_at": now_iso(), "last_processed_time": 0.0,
+            "types": fresh_types(), "types_since": now_iso()}
+
+
+# ---- chest types (v0.2.2): which kind of chest each COUNTED chest was. A label only - it never changes CERTAIN / APPROX.
+# state["types"][kind] = {"certain": n, "approx": n} for chests the detector counted since state["types_since"]; APPROX
+# includes CERTAIN, as for the totals. Everything else in the totals - counts saved before v0.2.2, Edit counts / Set
+# starting count, manual corrections - is "unclassified" = total - sum of the types (derived, never stored, so the
+# numbers always add up; it can be negative after a manual correction downwards). No history is ever invented.
+
+def _clean_types(raw):
+    """Saved types -> a valid dict (unknown future kinds are kept if well-formed), or None if unusable."""
+    if not isinstance(raw, dict):
+        return None
+    out = fresh_types()
+    for kind, v in raw.items():
+        if isinstance(kind, str) and isinstance(v, dict) and _valid_count(v.get("certain")) and _valid_count(v.get("approx")):
+            out[kind] = {"certain": v["certain"], "approx": max(v["approx"], v["certain"])}
+    return out
+
+
+def type_breakdown(state):
+    """-> {kind: {"certain", "approx"}, ..., "unclassified": {"certain", "approx"}} with every row adding up to the totals."""
+    types = state.get("types") or fresh_types()
+    rows = {kind: dict(v) for kind, v in types.items()}
+    rows["unclassified"] = {"certain": state["certain"] - sum(v["certain"] for v in types.values()),
+                            "approx": state["approximate"] - sum(v["approx"] for v in types.values())}
+    return rows
 
 
 def _valid_count(value):
@@ -120,6 +152,11 @@ def load_state(path, warn=print):
         warn(f"WARNING: the saved counter ({path}) is damaged ({error}). Starting from 0. {where}")
         return fresh_state()
     state = {**fresh_state(), **raw}
+    types = _clean_types(raw.get("types"))
+    if types is None:                       # saved before v0.2.2 (or damaged): every saved chest stays "unclassified"
+        state["types"], state["types_since"] = fresh_types(), now_iso()
+    else:
+        state["types"] = types
     if state["approximate"] < state["certain"]:
         warn(f"WARNING: saved APPROX ({state['approximate']}) was below CERTAIN ({state['certain']}); "
              f"APPROX is the total and includes the certain chests, so it was raised to {state['certain']}.")
@@ -256,6 +293,7 @@ class CounterSession:
         self.loaded_existing = (not reset) and self.persist and self.state_path.exists()
         self.log = SessionLog(cfg["logging"])
         self.latencies = []
+        self.recent = {}                      # event time -> (event id, chest type, certain, approx): for type updates
         self._warned = set()
         self._mtime = self._state_mtime()
 
@@ -324,6 +362,14 @@ class CounterSession:
             st["approximate"] += approx_inc
             if st["approximate"] < st["certain"]:                       # cannot happen; repair rather than ever show it
                 st["approximate"] = st["certain"]
+            kind = ev.get("chest_type") or chest_types.UNKNOWN
+            if certain_inc or approx_inc:                               # the label of a counted chest (never a count)
+                row = st.setdefault("types", fresh_types()).setdefault(kind, {"certain": 0, "approx": 0})
+                row["certain"] += certain_inc
+                row["approx"] += approx_inc
+                self.recent[round(ev["time"], 3)] = (event_id, kind, certain_inc, approx_inc)
+                if len(self.recent) > 200:
+                    self.recent.pop(next(iter(self.recent)))
             ev["event_id"], ev["stamp"] = event_id, mmss(ev["time"])
             snapshot = ev.pop("_snapshot", None)
             verdict = "CERTAIN" if certain_inc else "APPROX" if approx_inc else "notcounted"
@@ -349,13 +395,51 @@ class CounterSession:
             if not quiet:
                 CONSOLE.event(ev, self.fmt(st["certain"]), self.fmt(st["approximate"]), st["certain"], st["approximate"])
             applied.append(ev)
+        if applied:
+            self.announce_types()
         return applied
+
+    def apply_type_updates(self, updates):
+        """The detector read a counted chest's type better after counting it (estimator.take_type_updates): move that
+        chest from its old type to the new one. The totals never change."""
+        changed = False
+        for u in updates or ():
+            known = self.recent.get(round(u["time"], 3))
+            if known is None:
+                continue
+            event_id, old, certain_inc, approx_inc = known
+            new = u["chest_type"]
+            if new == old:
+                continue
+            types = self.state.setdefault("types", fresh_types())
+            src, dst = types.setdefault(old, {"certain": 0, "approx": 0}), types.setdefault(new, {"certain": 0, "approx": 0})
+            if src["approx"] < approx_inc or src["certain"] < certain_inc:
+                continue                                                 # a Reset happened since: nothing to move
+            src["certain"] -= certain_inc
+            src["approx"] -= approx_inc
+            dst["certain"] += certain_inc
+            dst["approx"] += approx_inc
+            self.recent[round(u["time"], 3)] = (event_id, new, certain_inc, approx_inc)
+            self.log.write({"event": "type_update", "event_id": event_id, "from": old, "to": new,
+                            "confidence": u.get("type_confidence"), "evidence": u.get("type_evidence"),
+                            "logged_at": now_iso()})
+            CONSOLE.emit("type_update", event_id=event_id, previous=old, chest_type=new)
+            changed = True
+        if changed:
+            self.save()
+            self.announce_types()
+        return changed
+
+    def announce_types(self):
+        """Machine mode: the chest-type breakdown of the counted chests (display only; OBS shows the totals)."""
+        CONSOLE.emit("types", breakdown=type_breakdown(self.state), since=self.state.get("types_since"))
 
     def announce(self):
         """Machine mode: tell the desktop app the current numbers and exactly what the OBS file shows."""
         CONSOLE.emit("counts", certain=self.state["certain"], approx=self.state["approximate"],
                      certain_text=self.fmt(self.state["certain"]), approx_text=self.fmt(self.state["approximate"]),
                      overlay=overlay_text(self.display, self.state))
+        self.announce_types()
 
 
 # ==================================================================
@@ -567,11 +651,13 @@ def cmd_simulate(args):
     for t, frame in source.frames():
         last_t = t
         events += session.apply(est.process_frame(t, frame), t)
+        session.apply_type_updates(est.take_type_updates())
         if args.realtime:
             ahead = (t - start) - (time.time() - wall0)
             if ahead > 0:
                 time.sleep(ahead)
     events += session.apply(est.flush(), last_t)
+    session.apply_type_updates(est.take_type_updates())
     session.save()
     session.write_obs()
     print(f"\nFinished at {mmss(last_t)} in {time.time() - wall0:.0f}s wall time. CERTAIN {session.fmt(state['certain'])}, "
@@ -611,6 +697,7 @@ def cmd_video(args):
         for t, frame in source.frames():
             last_t, frames = t, frames + 1
             session.apply(est.process_frame(t, frame), t)
+            session.apply_type_updates(est.take_type_updates())
             if t >= next_report:
                 CONSOLE.status(f"{mmss(t)} of video analysed | CERTAIN {session.fmt(state['certain'])} | APPROX {session.fmt(state['approximate'])}")
                 next_report += 60.0
@@ -621,6 +708,7 @@ def cmd_video(args):
                 stopped_early = True
                 break
         session.apply(est.flush(), last_t)
+        session.apply_type_updates(est.take_type_updates())
     except KeyboardInterrupt:
         stopped_early = True
         print("\nStopped early; the numbers below cover only the part already analysed.")
@@ -1140,6 +1228,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                 break
             t0 = time.perf_counter()
             applied = session.apply(est.process_frame(t, frame), t)
+            session.apply_type_updates(est.take_type_updates())
             dt = time.perf_counter() - t0
             recent.append(dt)
             n_frames, total_s, max_s = n_frames + 1, total_s + dt, max(max_s, dt)
@@ -1227,6 +1316,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
             stop_reason = guard.reason or "window closed (X)"
         # Persist first (the console may already be gone when the window was closed), print last.
         flushed = session.apply(est.flush(), source.elapsed(), quiet=closing)
+        session.apply_type_updates(est.take_type_updates())
         session.save()
         session.write_obs()
         source.close(wait=not closing)

@@ -110,6 +110,11 @@ Details and the other files: [overlay guide](docs/guides/obs-overlay.md).
   own video source (such as that streamer's Twitch link). **New profile...**, **Rename...** and **Delete...** sit above the
   numbers; a deleted profile's counts are kept in `state\profiles\deleted\`. One profile counts at a time, and the OBS text
   file always shows the selected profile. Counts from earlier versions become the **Default** profile.
+- **Chest types** (v0.2.2): the line under the numbers splits the APPROX total by the pop-up's wording - **Chest**, **Rare
+  chest**, **Sprite chest**, or **Unknown type** when the line could not be read reliably (a chest is never guessed to be a
+  normal one). It is a label only: CERTAIN and APPROX are counted exactly as before, and OBS still shows only the two
+  totals. Chests counted before v0.2.2, or set with **Edit counts...**, are listed as *not classified*. Each profile keeps its
+  own split; **Reset...** clears it.
 - **Analyse a recording...:** count a video file, faster than real time; never changes the live counter
   ([guide](docs/guides/recorded-video.md)).
 - **Diagnostic recording and Ctrl+Alt+M:** optional - keep the video around a missed chest (press **Ctrl+Alt+M** or **Mark

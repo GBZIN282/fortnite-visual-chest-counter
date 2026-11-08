@@ -295,3 +295,56 @@ new one, decision by decision, and checking every difference on the footage (sec
 
 Rejected on evidence: enlarging the picture to find the small word (false alarm on PS5 at 0.806, ~34 ms per frame);
 letting the digit reference follow the content (Thiefs' X3 drifted in unnoticed).
+
+## 13. Replays' 25-minute session, replayed with v0.2.1 and v0.2.2
+
+`20261108_030211`, all 6 clips (15,000 frames): v0.2.1 84 counted (63 CERTAIN), v0.2.2 82 (58 CERTAIN). Every
+difference was checked on the footage:
+
+| Clip / time | v0.2.1 | v0.2.2 | Footage |
+|---|---|---|---|
+| 2 / 311.2 s | CERTAIN | - | over-count: WEAKPOINT STREAK line added to "+850 XP / CHEST / MAXIMUM AMMO" |
+| 3 / 77.2 s | CERTAIN | - | over-count: the same unchanged "+600 XP / CHEST" pop-up |
+| 3 / 98.8 s | CERTAIN | - | over-count: SPRITE LEVEL line added |
+| 3 / 111.5 s | - | APPROX (X2) | real chest, missed by v0.2.1 |
+| 3 / 116.1 s (v0.2.1: 118.1 s) | CERTAIN (fire as the pop-up faded) | APPROX (X2 on the third line) | the same real chest; v0.2.2 for the right reason |
+| 2 / 16.7 s | CERTAIN (late exact fire on the counted pop-up) | APPROX (X2, 15.9 s) | the same real chest; v0.2.2 for the right reason |
+
+Net: 3 over-counts removed, 1 missed chest recovered; all 5 CERTAINs that v0.2.2 does not give were over-counts or right
+for the wrong reason. `20261108_054155`: identical (6 -> 6, all CERTAIN).
+
+Processing cost, measured old and new on the same decoded frames one after the other (no other load):
+
+| Capture | v0.2.1 mean / p99 | v0.2.2 mean / p99 | frames > 66.7 ms |
+|---|---|---|---|
+| `054155` (normal HUD, 600 frames) | 14.8 / 58 ms | 16.2 / 62 ms | 0-1 -> 0 |
+| `030211` clip 3 (normal HUD, vault, 1,950 frames) | 10.6 / 46 ms | 11.2 / 49 ms | 0 -> 1-2 |
+| `024147` Thiefs (small HUD, 750 frames) | 12.0 / 36 ms | 9.1 / 36 ms | 0 -> 0 |
+
+About +1 ms per frame at normal HUD (the small-word search until the HUD scale is voted, and the tracker while a pop-up is
+on screen); faster on the small-HUD stream, because the large-HUD search stops once its scale is known. The live check of
+the packaged app (sustained 15 fps, dropped frames) is still to be done.
+
+## 14. Chest types (v0.2.2 statistics)
+
+`detection/chest_types.py`: every counted chest is labelled with the type of its own pop-up line - the word left of
+CHEST: nothing = a normal chest; RARE or SPRITE decided by the word's LENGTH relative to CHEST (RARE 0.77-0.89, SPRITE
+1.04-1.18, nothing 0.00-0.04 on the labelled lines) and confirmed by the EXACT match of that word (>= 0.50 and >= 0.15
+above the other word; real words 0.67-0.94 median, random ink of the same length <= 0.41 - a blurred match was rejected
+because random ink reached 0.65 against it). Anything else is "unknown"; an uncertain line is never called normal. A
+chest's type is the majority (>= 60 %, >= 3 readings) of its line's readings while the pop-up is on screen; a label that
+becomes clearer after the chest was counted is sent as a type update and moves the chest between types - the totals never
+change. Word templates: RARE (normal size) from the English reference clip, SPRITE (normal) from Replays' 054155 at 14 s,
+both small-size words from Thiefs' first two pop-ups.
+
+| Footage | Chests | Correct type | Unknown | Wrong |
+|---|---|---|---|---|
+| 11 cases (28 chests; 14 normal, 11 rare, 3 sprite) | 28 | 28 | 0 | 0 |
+| English reference, clean | 6 | 5 | 1 (the SPRITE line at 72.3 s, its RARE line flickering) | 0 |
+| English reference, 6 / 2.5 Mbps | 6 / 6 | 6 / 6 | 0 | 0 |
+
+Partly in-sample: the SPRITE (normal) word and both small-size words come from footage that is also in the cases (the
+in-sample lines are Replays' 13.0 s SPRITE chest and Thiefs' 21.3 s / 24.9 s chests). Out-of-sample: every RARE line at
+normal size, the reference clip's SPRITE line, Replays' vault SPRITE line, and Thiefs' later lines. More streams are
+needed before trusting the RARE / SPRITE split as much as the totals; other chest words (e.g. a future "DARK CHEST") will
+read as unknown, or - if four letters long - must be checked before they are trusted not to read as RARE.

@@ -33,11 +33,14 @@ Safeguards (each from a measured failure case):
   * a digit change must keep the line's strength and ink (a fading pop-up erodes the digit);
   * lines are matched by order from the top: a line added below pushes the others up, which is not a change.
 
+Each frame also reads every chest line's TYPE (chest_types.py, via the `classify` hook) as a vote per line, so the
+estimator can label each counted chest with the line that produced it - a label only, never a count.
+
 No OCR: the digit is compared with the line's previous digit only, so X4..X9 need no templates. Pure numpy on the
 lavender mask the detector computes anyway; it only runs while a pop-up is being tracked.
 """
 
-from collections import deque
+from collections import Counter, defaultdict, deque
 
 import numpy as np
 from scipy.ndimage import gaussian_filter, maximum_filter
@@ -195,6 +198,8 @@ class PopupTracker:
         self.cand_xp, self.diff_since = None, None
         self.same_run = 0
         self.recent_counts = deque(maxlen=LINE_WINDOW)
+        self.classify = None           # optional (mask, Line) -> chest type: one vote per line per frame
+        self.info = None               # this run's {"votes": {line index: Counter}, "first_count": lines of state 1}
 
     @property
     def active(self):
@@ -204,6 +209,7 @@ class PopupTracker:
         if self.started is None:
             self.started, self.last_seen, self.center = t, t, center
             self.run += 1
+            self.info = {"votes": defaultdict(Counter), "first_count": None}   # a new dict per run: labels keep theirs
 
     def stop(self):
         self.started = self.stable = self.cand = self.last_seen = self.stable_xp = self.last_change = None
@@ -230,6 +236,18 @@ class PopupTracker:
             self.cand, self.cand_n = None, 0
             return None
         self.last_seen = t
+        layout = self.stable if self.stable is not None else self.cand
+        if self.classify is not None and layout is not None:
+            if len(lines) == len(layout):
+                pairs = list(enumerate(lines))                          # same layout: line i is the same line
+            else:                                                       # a line not visible: match the others by place
+                pairs = []
+                for ln in lines:
+                    i = min(range(len(layout)), key=lambda k: abs(layout[k].y - ln.y))
+                    if abs(layout[i].y - ln.y) <= 0.6 * th:
+                        pairs.append((i, ln))
+            for i, ln in pairs:
+                self.info["votes"][i][self.classify(mask, ln)] += 1
         xp = xp_box(mask, lines[0], th, tw)
         count, seen = len(lines), lines
         if self.stable is not None:
@@ -264,6 +282,7 @@ class PopupTracker:
         self.stable, self.stable_xp, self.xp_min = new, xp, 1.0
         self.diff_since, self.same_run = None, self.stable_frames      # any adopted state ends the previous difference
         if old is None:
+            self.info["first_count"] = len(new)
             return None                                                  # the pop-up's first state: its onset counted it
         change = self._change(old, new)
         if change is None:
@@ -293,11 +312,11 @@ class PopupTracker:
             self.rejected_without_xp += 1
             return None
         self.last_change = began
-        return {"kind": "new_line", "t": began, "lines": len(lines)}
+        return {"kind": "new_line", "t": began, "lines": len(lines), "line": len(lines) - 1}
 
     def _change(self, old, new):
         if len(new) > len(old):
-            return {"kind": "new_line", "t": self.cand_t, "lines": len(new)}
+            return {"kind": "new_line", "t": self.cand_t, "lines": len(new), "line": len(new) - 1}
         if len(new) < len(old):
             return None                                                  # a line left (reflow / fade): never a chest
         for i, (lo, ln) in enumerate(zip(old, new)):

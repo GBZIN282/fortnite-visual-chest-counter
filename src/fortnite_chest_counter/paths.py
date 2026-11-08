@@ -52,6 +52,10 @@ PACKAGED = FROZEN or Path(sys.executable).resolve().parent == EMBEDDED_RUNTIME.r
 REQUIRED_TEMPLATES = [
     TEMPLATES_DIR / "chest" / "en" / "chest.npy",
     TEMPLATES_DIR / "chest" / "en" / "chest_small.npy",
+    TEMPLATES_DIR / "chest" / "en" / "rare.npy",
+    TEMPLATES_DIR / "chest" / "en" / "rare_small.npy",
+    TEMPLATES_DIR / "chest" / "en" / "sprite.npy",
+    TEMPLATES_DIR / "chest" / "en" / "sprite_small.npy",
     TEMPLATES_DIR / "chest" / "pt" / "bau.npy",
     TEMPLATES_DIR / "container_opened.npy",
     TEMPLATES_DIR / "ui" / "interaction_disc.npy",

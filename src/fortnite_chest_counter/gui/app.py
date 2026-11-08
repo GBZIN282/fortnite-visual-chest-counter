@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
 
 from fortnite_chest_counter import counter as C
 from fortnite_chest_counter import paths, profiles, settings
+from fortnite_chest_counter.detection import chest_types
 from fortnite_chest_counter.gui import theme
 from fortnite_chest_counter.gui.worker import Worker, run_command
 from fortnite_chest_counter.obs import credentials as obs_credentials
@@ -174,6 +175,32 @@ def read_counts(state_path):
     except (OSError, ValueError, KeyError, TypeError):
         pass
     return None
+
+
+def read_types(state_path):
+    """The chest-type breakdown of the counter file (counter.type_breakdown), or None. Read-only."""
+    try:
+        raw = json.loads(Path(state_path).read_text(encoding="utf-8"))
+        state = {**C.fresh_state(), **raw}
+        cleaned = C._clean_types(raw.get("types"))
+        state["types"] = cleaned if cleaned is not None else C.fresh_types()
+        return C.type_breakdown(state)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def types_text(breakdown):
+    """One compact line: the APPROX total split by chest type (labels only - the totals stay the source of truth)."""
+    if not breakdown:
+        return ""
+    parts = [f"{chest_types.LABELS[k]} {fmt(breakdown[k]['approx'])}" for k in (*chest_types.KNOWN, chest_types.UNKNOWN)
+             if k in breakdown and breakdown[k]["approx"]]
+    parts += [f"{k} {fmt(v['approx'])}" for k, v in breakdown.items()
+              if k not in (*chest_types.KNOWN, chest_types.UNKNOWN, "unclassified") and v["approx"]]
+    rest = breakdown.get("unclassified", {}).get("approx", 0)
+    if rest:
+        parts.append(f"not classified {fmt(rest)}")
+    return "   ·   ".join(parts) if parts else "no chests yet"
 
 
 def label(text, name=None, wrap=False):
@@ -797,6 +824,15 @@ class Dashboard(QWidget):
         actions.addStretch(1)
         counts.addLayout(actions)
         layout.addLayout(counts)
+        types = QHBoxLayout()                                 # v0.2.2: read-only chest-type split of the APPROX total
+        types.addWidget(label("Chest types:", "hint"), 0, Qt.AlignTop)
+        self.types = label("", "hint", wrap=True)
+        self.types.setToolTip("How the counted chests split by type (APPROX, the total). Read from each chest's pop-up "
+                              "line: CHEST, RARE CHEST or SPRITE CHEST - 'unknown type' when the line could not be read. "
+                              "'Not classified' = chests counted before v0.2.2, or set with Edit counts. "
+                              "OBS still shows only the two totals.")
+        types.addWidget(self.types, 1)
+        layout.addLayout(types)
         viewers = QHBoxLayout()
         viewers.addWidget(label("Viewers see:", "hint"), 0, Qt.AlignTop)
         self.viewers = label("", "hint", wrap=True)
@@ -1957,6 +1993,8 @@ class MainWindow(QMainWindow):
                 self.last_status = message
             if kind == "counts" and message.get("overlay") is not None:
                 self.dashboard.viewers.setText(message["overlay"].replace("\n", "   /   "))
+        elif kind == "types":
+            self.dashboard.types.setText(types_text(message.get("breakdown")))
         elif kind == "stream":
             self.show_stream_state(message.get("state"))
         elif kind == "error":
@@ -2057,6 +2095,7 @@ class MainWindow(QMainWindow):
         self._state_mtime = mtime
         counts = read_counts(path)
         self.set_counts(*(counts or (0, 0)))
+        self.dashboard.types.setText(types_text(read_types(path) or C.type_breakdown(C.fresh_state())))
 
     def write_obs_files(self, quiet=False):
         """The OBS text files from the saved counter (e.g. after an update replaced them with zero placeholders)."""

@@ -102,8 +102,12 @@ def test_session_announces_counts_and_overlay():
         session.announce()
     out = messages(buf)
     assert out[0]["type"] == "event" and out[0]["certain"] == 1 and out[0]["approx"] == 1
-    assert out[-1] == {"type": "counts", "certain": 1, "approx": 1, "certain_text": "1", "approx_text": "1",
-                       "overlay": "CERTAIN OPENED CHESTS: 1\nAPPROX. OPENED CHESTS: 1"}
+    counts = [m for m in out if m["type"] == "counts"]
+    assert counts[-1] == {"type": "counts", "certain": 1, "approx": 1, "certain_text": "1", "approx_text": "1",
+                          "overlay": "CERTAIN OPENED CHESTS: 1\nAPPROX. OPENED CHESTS: 1"}
+    types = [m for m in out if m["type"] == "types"]                  # v0.2.2: the chest-type split follows the counts
+    assert out[-1]["type"] == "types" and types[-1]["breakdown"]["unknown"] == {"certain": 1, "approx": 1}
+    assert types[-1]["breakdown"]["unclassified"] == {"certain": 0, "approx": 0}
 
 
 # ------------------------------------------------------------------ stop channel
