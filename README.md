@@ -17,7 +17,7 @@ without revealing hidden information or providing gameplay assistance. See
 
 > Independent, unofficial project: not affiliated with, endorsed by or approved by Epic Games. "Fortnite" is a trademark of
 > Epic Games, Inc.
-> Status: **v0.2.0 public beta** (desktop app). Developed and tested during Fortnite Chapter 7 Season 5 (November 2026) -
+> Status: **v0.2.1 public beta** (desktop app; Livestream URL input is experimental). Developed and tested during Fortnite Chapter 7 Season 5 (November 2026) -
 > see [Fortnite compatibility](#fortnite-compatibility). Windows 10 / 11. Nothing to install.
 
 **Contents:** [The two numbers](#the-two-numbers-read-this-first) · [Download](#download) · [Choose your setup](#choose-your-setup) ·

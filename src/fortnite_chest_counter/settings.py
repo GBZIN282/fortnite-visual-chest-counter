@@ -69,6 +69,7 @@ DEFAULTS = {
         "window": "",                           # window title for --source window (an OBS "Windowed Projector (Source)")
         "url": "",                              # livestream URL for --source stream (Twitch / YouTube)
         "stream_quality": "720p",               # --source stream: 720p (recommended) | 1080p | 480p
+        "stream_stability": "maximum",          # --source stream: maximum (recommended) | balanced | low_latency
         "status_interval_seconds": 5,
     },
     "obs_websocket": {
@@ -86,6 +87,17 @@ DEFAULTS = {
 _TIERS = ("CERTAIN", "HIGH")
 _SOURCES = ("obs-camera", "device", "desktop", "window", "stream", "file")
 STREAM_QUALITIES = ("720p", "1080p", "480p")
+# Livestream URL "Stream stability" (input/video_sources.STREAM_STABILITY holds the Streamlink values): key, name, text.
+STREAM_STABILITY_CHOICES = (
+    ("maximum", "Maximum stability   (recommended)",
+     "Lowest buffering risk. Keeps the biggest safety buffer, so short network hiccups do not interrupt counting - "
+     "counts appear later (the most delay of the three). Best for long sessions."),
+    ("balanced", "Balanced",
+     "Moderate buffering risk. A middle way between delay and buffering protection (Streamlink's standard setting)."),
+    ("low_latency", "Low latency   (higher buffering risk)",
+     "Follows the live stream most closely, but may buffer or reconnect more often on an unstable connection. Not "
+     "recommended when complete counts matter."),
+)
 SHOW_MODES = ("both", "certain", "approx")
 BOTH_LAYOUTS = ("stacked", "inline")
 VERBOSITY_LEVELS = ("minimal", "normal", "debug")
@@ -151,6 +163,9 @@ def _check(section, key, value):
         return (isinstance(value, str), "must be text in quotes")
     if section == "live" and key == "stream_quality":
         return (value in STREAM_QUALITIES, f"must be one of {list(STREAM_QUALITIES)}")
+    if section == "live" and key == "stream_stability":
+        keys = [k for k, _, _ in STREAM_STABILITY_CHOICES]
+        return (value in keys, f"must be one of {keys}")
     if section == "obs_websocket":
         if key == "port":
             return (isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535,

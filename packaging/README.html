@@ -36,7 +36,7 @@
 <main>
 
 <h1>Fortnite Visual Chest Counter</h1>
-<p class="sub">Automatically count Fortnite chests from gameplay video &middot; v0.2.0 public beta &middot; Windows 10 / 11 &middot; no Python or programming needed</p>
+<p class="sub">Automatically count Fortnite chests from gameplay video &middot; v0.2.1 public beta &middot; Windows 10 / 11 &middot; no Python or programming needed</p>
 
 <h2 style="border-top:none;margin-top:1rem">What this is</h2>
 <p>A small app for players and streamers. It recognises the chest-opening pop-ups in Fortnite gameplay video and keeps
@@ -83,6 +83,23 @@ number closely, but computer vision is never 100%. See <a href="#limits">Known l
   <li><a href="#compat">Fortnite compatibility</a></li>
   <li><a href="#limits">Limitations</a></li>
 </ul></nav>
+
+<h2 id="stream">NEW (experimental): count from a Twitch or YouTube livestream URL</h2>
+<p>No OBS, capture card or browser needed. In the app: <b>Video source</b> &rarr; <b>Livestream URL (Twitch / YouTube)
+&ndash; EXPERIMENTAL</b>, paste the link (<code>https://www.twitch.tv/CHANNEL</code> or a YouTube <code>watch?v=</code> /
+<code>@CHANNEL/live</code> link), keep <b>Stream stability: Maximum stability (recommended)</b>, click <b>Start
+counting</b>. The stream must be live and public.</p>
+<ul>
+<li>The counter reads the stream as viewers get it, a few seconds to about a minute behind, and checks every picture in
+order. Delay does not matter for the count.</li>
+<li><b>Stream stability:</b> <i>Maximum stability</i> = lowest buffering risk, most delay (best for long sessions);
+<i>Balanced</i> = moderate buffering risk; <i>Low latency</i> = higher buffering risk, not recommended when complete counts
+matter. No setting can bring back video the platform never delivered.</li>
+<li><b>Experimental &ndash; please know:</b> network interruptions, ad breaks and stream restarts can make the counter miss
+chests. The app reconnects by itself, keeps your counts, and says so clearly (red <i>Reconnecting</i> in the status, the
+Activity log and over the Live preview), including how many seconds could not be seen. Multi-hour reliability is not
+verified yet, and Twitch and YouTube have not been compared over long sessions.</li>
+</ul>
 
 <h2 id="need">What you need</h2>
 <ul>

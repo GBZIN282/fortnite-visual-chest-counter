@@ -365,6 +365,14 @@ class WindowSource(LiveSource):
 # ==================================================================
 
 STREAM_QUALITIES = {"720p": "720p60,720p,best", "1080p": "1080p60,1080p,best", "480p": "480p,480p30,best"}
+# Stream stability presets -> Streamlink options. live_edge: how many segments behind the live point reading starts (and
+# restarts after a drop - so a reconnect never goes back to video already analysed); ringbuffer: compressed video Streamlink
+# may hold while the counter catches up; threads: parallel segment downloads (catching up after a slow moment); timeout:
+# how long a stalled download is waited for before reconnecting (filtered Twitch ad breaks do not count). Defaults of
+# Streamlink 8.6: live edge 3, ringbuffer 16M, 1 thread, timeout 60 s. Bigger values = more delay, fewer interruptions.
+STREAM_STABILITY = {"maximum": {"live_edge": 6, "ringbuffer": "64M", "threads": 2, "timeout": 90},
+                    "balanced": {"live_edge": 3, "ringbuffer": "32M", "threads": 1, "timeout": 60},
+                    "low_latency": {"live_edge": 2, "ringbuffer": "16M", "threads": 1, "timeout": 60}}
 
 
 class StreamSource:
@@ -377,17 +385,23 @@ class StreamSource:
     not matter here, completeness does. Memory stays bounded by backpressure: a small picture queue, then the pipes, then
     Streamlink's own buffer of compressed video. Timestamps are stream time (picture number / rate), not arrival time.
 
-    If the stream drops after it started (network, stream restart), it is opened again with backoff at the newest part
-    (nothing is analysed twice), the time line jumps over the missed part, and the counts are kept.
+    If the stream drops after it started (network, stream restart), it is opened again with backoff (plus jitter, so many
+    counters never retry in step) at the same distance from live as before - always after the video already analysed, so
+    nothing is counted twice - the time line jumps over the missed part, and the counts are kept. Video Streamlink had to
+    skip, and an analysis that falls behind the stream for good, are reported, never hidden.
     """
     QUEUE_PICTURES = 15
     BUFFERING_AFTER = 10.0                  # seconds without pictures (bursts normally arrive every ~4-5 s)
     RECONNECT_DELAYS = (5, 10, 20, 30, 60)
     FIRST_PICTURE_TIMEOUT = 45.0
+    LAG_WARN_AFTER = 60.0                   # backlog (s) that means "this PC cannot keep up", reported once ...
+    LAG_OK_BELOW = 20.0                     # ... until it is back under this
 
-    def __init__(self, url, fps, quality="720p"):
+    def __init__(self, url, fps, quality="720p", stability="maximum"):
         self.url, self.fps = url, fps
         self.quality = STREAM_QUALITIES.get(quality, quality)
+        self.stability = STREAM_STABILITY.get(stability, STREAM_STABILITY["maximum"])
+        self._first = None                  # (wall time, stream time) of the first analysed picture: backlog reference
         self.label = f"stream: {url}"
         self.info = {"input_resolution": None, "input_fps": None}
         self.frames_read = self.frames_processed = self.frames_dropped = 0
@@ -404,8 +418,17 @@ class StreamSource:
         self._last_t = 0.0
 
     def streamlink_command(self, live_edge):
+        s = self.stability
         return [sys.executable, "-m", "streamlink", "--stdout", "--loglevel", "info", "--hls-live-edge", str(live_edge),
-                "--stream-segment-attempts", "5", "--stream-timeout", "30", self.url, self.quality]
+                "--ringbuffer-size", s["ringbuffer"], "--stream-segment-threads", str(s["threads"]),
+                "--stream-segment-attempts", "5", "--stream-timeout", str(s["timeout"]), self.url, self.quality]
+
+    def backlog_seconds(self):
+        """How far the analysis is behind the video received so far (s). Bursts make it swing a few seconds; a steady
+        rise means this PC cannot analyse the stream in real time."""
+        if self._first is None:
+            return 0.0
+        return max(0.0, (time.monotonic() - self._first[0]) - (self._last_t - self._first[1]))
 
     # ---- processes
     def _start(self, live_edge):
@@ -443,6 +466,9 @@ class StreamSource:
                     self.info["input_resolution"] = (int(size[1]), int(size[2]))
                 if rate:
                     self.info["input_fps"] = float(rate[1])
+            elif tag == "streamlink" and "skipped segment" in line.lower():
+                self._notices.append(("incomplete", "the stream had to skip some video (slow connection, or the counter "
+                                                    "fell too far behind): chests in that part are missing from the count."))
             elif tag == "streamlink" and ("advertisement" in line.lower() or "pre-roll ads" in line.lower()):
                 self._notices.append(("ad", "AD BREAK on the stream - counting continues when the game is back."))
 
@@ -455,7 +481,8 @@ class StreamSource:
 
     # ---- the reader thread: every picture, in order
     def _pump(self):
-        live_edge, attempt, n, gap, lost_at = 3, 0, 0, 0.0, None
+        import random
+        live_edge, attempt, n, gap, lost_at = self.stability["live_edge"], 0, 0, 0.0, None
         while not self._stop.is_set():
             self.stderr_tail = []
             _, ff = self._start(live_edge)
@@ -491,7 +518,7 @@ class StreamSource:
                 self._started.set()
                 break
             attempt = 1 if got else attempt + 1
-            delay = self.RECONNECT_DELAYS[min(attempt, len(self.RECONNECT_DELAYS)) - 1]
+            delay = round(self.RECONNECT_DELAYS[min(attempt, len(self.RECONNECT_DELAYS)) - 1] * random.uniform(0.8, 1.2), 1)
             if lost_at is None:
                 lost_at = time.monotonic()
             self._reconnecting = True
@@ -501,8 +528,7 @@ class StreamSource:
             else:
                 self._notices.append(("reconnecting", f"CONNECTION LOST ({reason}). Reconnecting in {delay} s - your "
                                                       "counts are kept."))
-            self._stop.wait(delay)
-            live_edge = 1                   # newest part only: nothing already analysed comes again
+            self._stop.wait(delay)          # same live edge again: the restart point is always after what was analysed
         self._done = True
 
     # ---- the LiveSource interface
@@ -527,13 +553,13 @@ class StreamSource:
             CONSOLE.emit("stream", state=state, text=text)
         elif state in ("reconnecting", "offline"):
             CONSOLE.error(text)
-        elif state == "live":
+        elif state in ("live", "caught_up"):
             CONSOLE.info(text)
         else:
             CONSOLE.warn(text)
 
     def frames(self):
-        last, buffering = time.monotonic(), False             # notices are printed here, in the counting thread
+        last, buffering, lagging = time.monotonic(), False, False   # notices are printed here, in the counting thread
         while not self._stop.is_set():
             while self._notices:
                 self._say(*self._notices.popleft())
@@ -553,6 +579,18 @@ class StreamSource:
             last = time.monotonic()
             self.frames_processed += 1
             self._last_t = t
+            if self._first is None:
+                self._first = (last, t)
+            backlog = self.backlog_seconds()
+            if not lagging and backlog > self.LAG_WARN_AFTER:
+                lagging = True
+                self._say("lagging", f"the counter is {backlog:.0f} s behind the stream and not catching up: this PC cannot "
+                                     f"analyse {self.fps} pictures per second in time. Nothing is skipped yet, but if it "
+                                     "keeps growing, Streamlink will have to skip video. Lower Settings > Pictures analysed "
+                                     "per second, or close other heavy programs.")
+            elif lagging and backlog < self.LAG_OK_BELOW:
+                lagging = False
+                self._say("caught_up", "the counter caught up with the stream.")
             yield t, frame
 
     def request_stop(self):
@@ -573,7 +611,7 @@ class StreamSource:
 
 
 def make_source(kind, fps, device=None, monitor=1, video=None, start=0.0, duration=None, window=None, url=None,
-                quality="720p"):
+                quality="720p", stability="maximum"):
     """Build a LiveSource for one of the backends."""
     if kind in ("obs-camera", "device"):
         name = "OBS Virtual Camera" if kind == "obs-camera" else device
@@ -597,7 +635,7 @@ def make_source(kind, fps, device=None, monitor=1, video=None, start=0.0, durati
         if not url:
             raise ValueError("source 'stream' needs a URL: paste the Twitch or YouTube link in the app, or set [live] url "
                              "in config.toml")
-        return StreamSource(url, fps, quality)
+        return StreamSource(url, fps, quality, stability)
     if kind == "file":
         args = ["-re"] + (["-ss", f"{start:.3f}"] if start else []) + (["-t", f"{duration:.3f}"] if duration else []) + ["-i", str(video)]
         return LiveSource(f"file (real time): {video}", args, fps)

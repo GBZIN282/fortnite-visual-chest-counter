@@ -1,4 +1,6 @@
-## Fortnite Visual Chest Counter v0.2.1 — Public Beta *(draft - not released)*
+## Fortnite Visual Chest Counter v0.2.1 — Public Beta
+
+### ⬇️ [Download for Windows: Fortnite-Visual-Chest-Counter-v0.2.1.zip](https://github.com/GabrielGzS/fortnite-visual-chest-counter/releases/download/v0.2.1/Fortnite-Visual-Chest-Counter-v0.2.1.zip) (156 MB)
 
 Windows 10 / 11 · nothing to install · extract the zip and open **`Fortnite Visual Chest Counter.exe`**
 
@@ -16,15 +18,23 @@ for setups where everything is already in use. Chest detection is unchanged.
 
 ### Livestream URL (Twitch / YouTube) - experimental
 
-**Video source** > **Livestream URL**, paste `https://www.twitch.tv/CHANNEL` or a YouTube live link, **Start counting**.
+**Video source** > **Livestream URL**, paste `https://www.twitch.tv/CHANNEL` or a YouTube live link, keep
+**Stream stability: Maximum stability (recommended)**, **Start counting**.
 The counter reads the stream as viewers get it (a few seconds behind) and analyses every picture in order, so nothing is
 skipped when the platform delivers video in bursts. If the connection drops, the app reconnects by itself, keeps your
 counts, and says so clearly - red *Reconnecting* in the status, the Activity log and over the Live preview - plus how many
 seconds of the stream could not be seen (chests in that part are missing from the count). Guide:
 [Livestream URL](https://github.com/GabrielGzS/fortnite-visual-chest-counter/blob/main/docs/guides/livestream-url.md).
 
-*Tested on a live Fortnite stream simulcast on Twitch and YouTube: both counted the same chests, and every counted chest
-checked was a real pop-up. How many chests a compressed stream makes it miss is not measured yet.*
+**Stream stability:** *Maximum stability* (recommended) = lowest buffering risk and the most delay, best for long
+sessions; *Balanced* = moderate buffering risk; *Low latency* = higher buffering risk, not recommended when complete counts
+matter. A bigger buffer cannot bring back video the platform never delivered.
+
+> **Experimental - please read:** network interruptions, ad breaks and stream restarts can make the counter miss chests
+> (the app tells you when and for how long). Multi-hour reliability is not verified yet, and Twitch and YouTube have not
+> been compared over long sessions - neither is recommended over the other yet. How many chests a compressed stream makes
+> it miss is not measured yet. Tested on a live Fortnite stream simulcast on Twitch and YouTube (both counted the same
+> chests; every counted chest checked was a real pop-up) and in a manual session (13 chests counted).
 
 ### OBS projector input
 
@@ -66,5 +76,6 @@ but misses chests. Your PC may differ.
 
 ### Unchanged
 
-Chest detection, the two numbers, the text files in `obs_output\`, your saved counts and settings. Updating: extract the
+Chest detection, the two numbers, the text files in `obs_output\`, your saved counts and settings. Fixed: the taskbar
+sometimes showed a generic icon instead of the app's own icon while the app was starting. Updating: extract the
 new zip and copy `state\` and `config.toml` from the old folder (see the README).

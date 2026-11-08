@@ -1054,7 +1054,7 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
     state = session.state
     try:
         source = sources.make_source(kind, fps, device=live["device"], monitor=live["monitor"], window=live["window"],
-                                     url=live["url"], quality=live["stream_quality"],
+                                     url=live["url"], quality=live["stream_quality"], stability=live["stream_stability"],
                                      video=args.video, start=args.start or 0.0, duration=args.duration)
     except ValueError as error:
         raise UserError(str(error))
@@ -1162,12 +1162,15 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
             if now_m - last_status >= interval:
                 span = now_m - last_status
                 det_fps = (source.frames_processed - processed_at_status) / span
+                backlog = source.backlog_seconds() if hasattr(source, "backlog_seconds") else None   # livestream only
                 CONSOLE.status(f"{det_fps:4.1f} fps (source {in_fps or '?'}) | dropped {session.fmt(source.frames_dropped)} "
                                f"| {1000 * np.mean(recent):.0f} ms/frame | CERTAIN {session.fmt(state['certain'])} "
-                               f"| APPROX {session.fmt(state['approximate'])}",
+                               f"| APPROX {session.fmt(state['approximate'])}"
+                               + (f" | backlog {backlog:.0f} s" if backlog is not None else ""),
                                fps=round(det_fps, 1), source_fps=in_fps, dropped=source.frames_dropped,
                                ms_per_frame=round(1000 * float(np.mean(recent)), 1),
-                               certain=state["certain"], approx=state["approximate"])
+                               certain=state["certain"], approx=state["approximate"],
+                               backlog_s=round(backlog, 1) if backlog is not None else None)
                 last_status, processed_at_status = now_m, source.frames_processed
             if now_m - last_status_log >= STATUS_LOG_SECONDS:
                 span = now_m - last_status_log
@@ -1176,6 +1179,8 @@ def _run_live(args, cfg, origin, live, kind, fps, estimator, sources, guard=None
                                    "frames_dropped_total": source.frames_dropped,
                                    "avg_frame_ms_recent": round(1000 * float(np.mean(recent)), 1),
                                    "max_frame_ms_so_far": round(1000 * max_s, 1),
+                                   "backlog_s": (round(source.backlog_seconds(), 1)
+                                                 if hasattr(source, "backlog_seconds") else None),
                                    "certain": state["certain"], "approximate": state["approximate"]})
                 last_status_log, processed_at_log = now_m, source.frames_processed
         else:

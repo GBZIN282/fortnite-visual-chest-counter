@@ -22,17 +22,24 @@ class FakeStream(sources.StreamSource):
     """Streamlink replaced by FFmpeg: `seconds` of 30 fps test video per connection, as fast as it can (a burst)."""
     RECONNECT_DELAYS = (0.2,)
 
-    def __init__(self, seconds=(3,), fail=None):
+    def __init__(self, seconds=(3,), fail=None, realtime=False, log_line=None):
         super().__init__("https://example.invalid/live", 15)
-        self.plan, self.fail, self.connections = list(seconds), fail, 0
+        self.plan, self.fail, self.connections, self.edges = list(seconds), fail, 0, []
+        self.realtime, self.log_line = realtime, log_line
 
     def streamlink_command(self, live_edge):
         self.connections += 1
+        self.edges.append(live_edge)
         if self.fail:
             return [sys.executable, "-c", f"import sys; sys.stderr.write('error: {self.fail}\\n'); sys.exit(1)"]
         seconds = self.plan.pop(0) if self.plan else 600
-        return ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
-                "-t", str(seconds), "-c:v", "mpeg2video", "-q:v", "5", "-f", "mpegts", "-"]
+        ff = ["ffmpeg", "-hide_banner", "-loglevel", "error"] + (["-re"] if self.realtime else []) + [
+              "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", str(seconds), "-c:v", "mpeg2video", "-q:v", "5",
+              "-f", "mpegts", "-"]
+        if not self.log_line:
+            return ff
+        return [sys.executable, "-c", "import subprocess, sys; sys.stderr.write(sys.argv[1] + '\\n'); sys.stderr.flush(); "
+                                      "subprocess.run(sys.argv[2:])", self.log_line, *ff]
 
 
 @contextlib.contextmanager
@@ -95,6 +102,43 @@ def test_a_dropped_stream_reconnects_and_moves_the_time_line_on():
     assert all(b > a for a, b in zip(times, times[1:]))                         # never back in time
     jumps = [b - a for a, b in zip(times, times[1:]) if b - a > 1 / 15 + 1e-9]
     assert jumps and jumps[0] >= 0.2                                            # the missed part is skipped, not replayed
+
+
+def test_reconnects_keep_the_stability_presets_distance_from_live():
+    s = FakeStream(seconds=(1, 1, 600))
+    try:
+        s.open()
+        take(s, 40)
+    finally:
+        s.close()
+    assert s.connections >= 3 and set(s.edges) == {sources.STREAM_STABILITY["maximum"]["live_edge"]}
+    cmd = sources.StreamSource("https://x.invalid", 15, stability="low_latency").streamlink_command(2)
+    assert cmd[cmd.index("--ringbuffer-size") + 1] == "16M" and cmd[cmd.index("--hls-live-edge") + 1] == "2"
+
+
+def test_video_streamlink_had_to_skip_is_reported():
+    s = FakeStream(seconds=(600,), log_line="[stream.hls][warning] Skipped segments 10-12 after playlist reload.")
+    with machine_mode() as buf:
+        try:
+            s.open()
+            take(s, 30)
+        finally:
+            s.close()
+    states = [json.loads(l).get("state") for l in buf.getvalue().splitlines() if l.startswith("{")]
+    assert "incomplete" in states
+
+
+def test_a_pc_that_cannot_keep_up_is_told_once():
+    s = FakeStream(seconds=(600,), realtime=True)
+    s.LAG_WARN_AFTER, s.LAG_OK_BELOW = 1.0, 0.5
+    with machine_mode() as buf:
+        try:
+            s.open()
+            take(s, 25, slow=0.15)                      # ~6.7 analysed per second for a 15 per second stream
+        finally:
+            s.close()
+    states = [json.loads(l).get("state") for l in buf.getvalue().splitlines() if l.startswith("{")]
+    assert states.count("lagging") == 1 and s.backlog_seconds() > 1.0
 
 
 def test_stop_ends_both_processes():

@@ -269,6 +269,8 @@ STREAM_STATES = {"live": (theme.CERTAIN, "Counting", None),
                  "buffering": (theme.APPROX, "Buffering", "BUFFERING ...\nwaiting for video from the stream"),
                  "ad": (theme.APPROX, "Ad break", "AD BREAK ...\ncounting continues when the game is back"),
                  "incomplete": (theme.APPROX, None, None),
+                 "lagging": (theme.APPROX, None, None),
+                 "caught_up": (theme.CERTAIN, None, None),
                  "reconnecting": (theme.REJECT, "Reconnecting", "RECONNECTING ...\nthe stream connection was lost"),
                  "offline": (theme.REJECT, "Stream offline", "STREAM OFFLINE\nchecking again automatically")}
 
@@ -806,6 +808,18 @@ class Dashboard(QWidget):
         self.url.setPlaceholderText("Paste the live link, e.g.  https://www.twitch.tv/channel  or  "
                                     "https://www.youtube.com/watch?v=...")
         url_layout.addWidget(self.url)
+        stab = QHBoxLayout()
+        stab.addWidget(label("Stream stability"))
+        self.stability = QComboBox()
+        for key, name, _ in settings.STREAM_STABILITY_CHOICES:
+            self.stability.addItem(name, key)
+        stab.addWidget(self.stability, 1)
+        url_layout.addLayout(stab)
+        self.stability_hint = label("", "hint", wrap=True)
+        url_layout.addWidget(self.stability_hint)
+        self.stability.currentIndexChanged.connect(lambda _: self.stability_hint.setText(
+            next(text for key, _, text in settings.STREAM_STABILITY_CHOICES if key == self.stability.currentData())
+            + " A bigger buffer cannot bring back video the platform never delivered (outages, ad breaks)."))
         url_layout.addWidget(label("EXPERIMENTAL. Counts from the public stream as viewers get it (a few seconds behind), at "
                                    "720p - no OBS, capture card or browser needed. Twitch and YouTube tested; the stream must "
                                    "be live and public. If the connection drops, the app reconnects by itself, keeps your "
@@ -1583,6 +1597,9 @@ class MainWindow(QMainWindow):
                  ("Livestream URL   (Twitch / YouTube, no OBS needed)   - EXPERIMENTAL", {"source": "stream"})]
         if not self.dashboard.url.text():
             self.dashboard.url.setText(live["url"])
+            stab = self.dashboard.stability
+            stab.setCurrentIndex(max(stab.findData(live["stream_stability"]), 0))
+            stab.currentIndexChanged.emit(stab.currentIndex())        # fill the explanation
         names = [n for n in devices if n != "OBS Virtual Camera"]
         if live["source"] == "device" and live["device"] not in names and live["device"] != "OBS Virtual Camera":
             names.append(live["device"])
@@ -1660,6 +1677,7 @@ class MainWindow(QMainWindow):
                                      "https://www.twitch.tv/channel  or  https://www.youtube.com/watch?v=...")
                     return
                 values["url"] = url
+                values["stream_stability"] = self.dashboard.stability.currentData()
             try:
                 C.update_config_file(config_file(), "live", values)   # the console version starts the same way
             except (C.UserError, OSError) as error:
@@ -1701,6 +1719,7 @@ class MainWindow(QMainWindow):
         d.start.setEnabled(mode != "stopping")
         d.source.setEnabled(not running)
         d.url.setEnabled(not running)
+        d.stability.setEnabled(not running)
         d.refresh.setEnabled(not running)
         d.analyse.setEnabled(not running)
         if mode == "connecting":
@@ -1908,6 +1927,8 @@ class MainWindow(QMainWindow):
             s = self.last_status
             if s:
                 parts.append(f"analysing {s['fps']:.1f} pictures/s")
+                if s.get("backlog_s") is not None:
+                    parts.append(f"backlog {s['backlog_s']:.0f} s")
                 parts.append(f"{s['ms_per_frame']:.0f} ms each")
                 if s.get("dropped"):
                     parts.append(f"{fmt(s['dropped'])} skipped")
