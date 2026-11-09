@@ -82,6 +82,11 @@ DEFAULTS = {
     "app": {
         "remember_window": True,                # the desktop app reopens with the size, position and maximised state it closed with
     },
+    "update": {
+        "check_automatically": True,            # look for a new version shortly after the app opens (nothing is downloaded by itself)
+        "download_bandwidth": "adaptive",       # adaptive | unlimited | custom
+        "custom_limit_kb_per_second": 2000,     # used when download_bandwidth = "custom"
+    },
 }
 
 _TIERS = ("CERTAIN", "HIGH")
@@ -98,6 +103,8 @@ STREAM_STABILITY_CHOICES = (
      "Follows the live stream most closely, but may buffer or reconnect more often on an unstable connection. Not "
      "recommended when complete counts matter."),
 )
+BANDWIDTH_MODES = ("adaptive", "unlimited", "custom")
+MIN_CUSTOM_LIMIT_KB, MAX_CUSTOM_LIMIT_KB = 50, 1_000_000
 SHOW_MODES = ("both", "certain", "approx")
 BOTH_LAYOUTS = ("stacked", "inline")
 VERBOSITY_LEVELS = ("minimal", "normal", "debug")
@@ -175,6 +182,11 @@ def _check(section, key, value):
                     "must be a PC name or IP address, e.g. \"127.0.0.1\"")
         if key in ("source", "source_uuid"):
             return (isinstance(value, str), "must be text in quotes")
+    if section == "update" and key == "download_bandwidth":
+        return (value in BANDWIDTH_MODES, f"must be one of {list(BANDWIDTH_MODES)}")
+    if section == "update" and key == "custom_limit_kb_per_second":
+        return (isinstance(value, int) and not isinstance(value, bool) and MIN_CUSTOM_LIMIT_KB <= value <= MAX_CUSTOM_LIMIT_KB,
+                f"must be a whole number from {MIN_CUSTOM_LIMIT_KB} to {MAX_CUSTOM_LIMIT_KB}")
     if key == "certain_min_tier":
         return (value in _TIERS, f"must be one of {list(_TIERS)}")
     if key == "source":

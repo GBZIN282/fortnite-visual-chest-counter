@@ -153,3 +153,13 @@ source_uuid = ""
 # The desktop app reopens with the size, position and maximised state it was closed with (saved in state/window.json).
 # false = always open at the default size. If the saved place is no longer on any screen, the window is moved back.
 remember_window = true
+
+[update]
+# Look for a new version shortly after the app opens. Nothing is downloaded or installed unless you choose to.
+check_automatically = true
+# How fast an update you chose to download may go:
+# "adaptive"  = about 1 MB/s while the app is counting, no limit otherwise. It follows counting; it does not measure your connection.
+# "unlimited" = never limited.   "custom" = always limited to custom_limit_kb_per_second.
+download_bandwidth = "adaptive"
+# Only for download_bandwidth = "custom": kilobytes per second, from 50 to 1000000.
+custom_limit_kb_per_second = 2000

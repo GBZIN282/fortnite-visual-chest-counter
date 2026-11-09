@@ -2,9 +2,27 @@
 
 Internal / developer note. Signing keys are covered in [UPDATE_SIGNING.md](UPDATE_SIGNING.md).
 
-**Current state:** the app does not start updates yet. Finding a release, downloading it, staging it, installing it and rolling back
-are built and pass the automated tests, but **a real packaged installation and rollback have not yet passed**. The app's window
-controls and settings are still to come.
+**Current state:** the whole updater is built, including the app's window controls and settings, and passes the automated tests. **A real
+packaged installation and rollback have not yet passed**, and no production signing key exists, so no real update can be installed yet.
+
+## In the app
+
+Shortly after opening, the app checks for a new version in the background, unless that is turned off in Settings > Updates. A failed
+automatic check says nothing. Nothing is downloaded or installed without the user asking.
+
+| Step | What the user sees |
+|---|---|
+| A verified newer release exists | A small "Update available" link in the sidebar. Nothing pops up |
+| Link or manual check | Version, release notes, **Download & Install**, **Later** |
+| Preparing | Stage, percentage, sizes, speed and Cancel. Counting continues, and the window can be closed |
+| Ready | **Restart & Install**, with confirmation first if counting is active |
+| After the restart | One notice: updated, rolled back, or needs attention |
+
+Installation is refused if counting does not stop cleanly, if another window or diagnostics is still open, or if `begin_install`
+refuses. In every case the app stays open and usable. A success notice needs a commit recorded for the version that is running.
+
+Speed settings are in the "Download speed" table below. The `[update]` section of `config.toml` holds them, and an update never
+touches that file.
 
 ## Preparing an update
 
@@ -146,6 +164,9 @@ The automated tests use small installations. A real package still has to pass `t
 | 5 | `chained` | An updated copy can install the next update with its own helper |
 
 Each scenario does one real unpack of about 400 MB, so leave a few minutes between them. A real app window opens during each one.
+
+Run these on a PC with Smart App Control on as well, with no exceptions or bypasses. The temporary helper uses a copy of the official
+signed Python from `.update\helper`, and that has to work there too. It is the one part of the update path that PC has not run yet.
 
 ## The package contract
 

@@ -142,7 +142,7 @@ def begin_install(app_dir=None, installed=__version__, public_keys=None, wait_pi
     _check_folders(root, update_dir, data_paths)
     python_folder = Path(python_folder if python_folder is not None else root / H.RUNTIME / "python")
     require_space(root, _folder_size(python_folder) + INSTALL_SPACE_MARGIN)
-    for leftover in (H.OLD_FOLDER, H.FAILED_FOLDER, H.HEALTH_FOLDER, H.BACKUP_FOLDER):
+    for leftover in (H.OLD_FOLDER, H.FAILED_FOLDER, H.HEALTH_FOLDER, H.BACKUP_FOLDER, H.RESULT_NAME):      # an old result must never be reported for this update
         staging._remove(update_dir / leftover)
     helper = build_helper(update_dir, python_folder)
     H.write_json_durably(update_dir / H.JOURNAL_NAME, {
@@ -167,6 +167,30 @@ def last_result(app_dir=None):
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def acknowledge_result(app_dir=None):
+    """The result has been shown to the user, so it is not shown again."""
+    try:
+        H.while_locked((Path(app_dir if app_dir is not None else paths.APP_DIR) / H.UPDATE_FOLDER / H.RESULT_NAME).unlink, True)
+    except OSError:
+        pass
+
+
+def clear_orphaned_journal(app_dir=None):
+    root = Path(app_dir if app_dir is not None else paths.APP_DIR).resolve()
+    _clear_orphaned_journal(root, root / H.UPDATE_FOLDER)
+
+
+def transaction_left_open(app_dir=None):
+    """True if an update did not finish and nothing is working on it. While the helper runs, this is False."""
+    root = Path(app_dir if app_dir is not None else paths.APP_DIR).resolve()
+    if not (root / H.UPDATE_FOLDER / H.JOURNAL_NAME).exists():
+        return False
+    guard = H.NamedMutex(H.transaction_mutex_name(root))
+    busy = guard.already_existed
+    guard.close()
+    return not busy
 
 
 def cleanup_finished(app_dir=None):

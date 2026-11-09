@@ -50,6 +50,7 @@ QToolTip {{ background: {SURFACE_3}; color: {TEXT}; border: 1px solid {BORDER}; 
 #pill {{ border-radius: 11px; padding: 3px 12px; font-size: 9pt; font-weight: 600; }}
 #banner {{ background: #3a1d22; border: 1px solid #6b2a33; border-radius: 8px; }}
 #bannerText {{ color: #ffd7dc; }}
+#notice {{ background: {SURFACE_2}; border: 1px solid {BORDER}; border-radius: 8px; }}
 #overlayBox {{ background: #000000; border: 1px solid {BORDER}; border-radius: 8px; padding: 10px 14px;
                font-family: "Segoe UI"; font-size: 15pt; font-weight: 700; color: #ffffff; }}
 

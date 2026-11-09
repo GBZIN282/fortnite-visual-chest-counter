@@ -18,7 +18,7 @@ src/fortnite_chest_counter/
                     that the live path imports only for constants.
   input/            video_sources.py: OBS Virtual Camera / capture device / desktop / file via ffmpeg
   gui/              the desktop app (v0.2.0, PySide6): app.py (window, pages, dialogs), worker.py (runs + observes the
-                    counting worker), theme.py, assets/ (icon PNGs)
+                    counting worker), update_manager.py (update state, no widgets), theme.py, assets/ (icon PNGs)
   preview.py        shared-memory picture for the app's optional live preview (no Qt)
   capture.py        optional diagnostic recording of the detector's input + decisions + marks ([capture], CAPTURE.md)
   review.py         `review` command: replay captures through the current detector, compare with live + labels

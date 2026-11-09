@@ -33,11 +33,13 @@ from fortnite_chest_counter import counter as C
 from fortnite_chest_counter import paths, profiles, settings
 from fortnite_chest_counter.detection import chest_types
 from fortnite_chest_counter.gui import theme
+from fortnite_chest_counter.gui import update_manager as UM
 from fortnite_chest_counter.gui.worker import Worker, run_command
 from fortnite_chest_counter.obs import credentials as obs_credentials
 from fortnite_chest_counter.obs.link import TextOutputLink
 from fortnite_chest_counter.preview import PreviewReader, block_name
 from fortnite_chest_counter.progress import Eta, clock_text, describe
+from fortnite_chest_counter.update import install as update_install
 from fortnite_chest_counter.version import APP_NAME, RELEASE_CHANNEL, TAGLINE, __version__
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -49,6 +51,9 @@ RECORDING_TEXT = {"marks": "only around your marks", "events": "around chest dec
                   "session": "the whole session"}
 REPO_URL = "https://github.com/GabrielGzS/fortnite-visual-chest-counter"
 UPDATE_HEALTH_DELAY_MS = 2000                                  # the window must have been running this long before it counts as started
+AUTO_CHECK_DELAY_MS = 6000                                     # after the window is up, so a check never competes with starting
+INSTALL_STOP_DEADLINE_MS = 45000                               # longer than the worker's own 30 seconds to stop
+RESULT_WATCH_SECONDS = 300
 LOG_LIMIT = 3000
 fmt = settings.format_count
 # OBS WebSocket output (obs/link.py) states -> (short name, colour)
@@ -789,6 +794,17 @@ class Dashboard(QWidget):
         self.banner.hide()
         layout.addWidget(self.banner)
 
+        # what the last update did: shown once, never in the error colours unless something needs attention
+        self.notice = QFrame()
+        self.notice.setObjectName("notice")
+        notice_layout = QHBoxLayout(self.notice)
+        notice_layout.setContentsMargins(14, 10, 10, 10)
+        self.notice_text = label("", wrap=True)
+        notice_layout.addWidget(self.notice_text, 1)
+        notice_layout.addWidget(button("Dismiss", on_click=self.notice.hide), 0, Qt.AlignTop)
+        self.notice.hide()
+        layout.addWidget(self.notice)
+
         # count profile (v0.2.2): whose chests these are. One profile counts at a time.
         prow = QHBoxLayout()
         prow.setSpacing(8)
@@ -971,6 +987,11 @@ class Dashboard(QWidget):
     def show_banner(self, text):
         self.banner_text.setText(text)
         self.banner.show()
+
+    def show_notice(self, text, color):
+        self.notice_text.setText(text)
+        self.notice_text.setStyleSheet(f"color: {color};")
+        self.notice.show()
 
 
 class OverlayPage(QWidget):
@@ -1332,6 +1353,34 @@ class SettingsPage(QWidget):
         box_layout.addWidget(self.remember_window)
         layout.addWidget(box)
 
+        box, box_layout = card("Updates", "Nothing is downloaded or installed unless you choose to. Your counts, profiles and settings are kept.")
+        self.update_auto = QCheckBox("Check for updates automatically when the app opens")
+        box_layout.addWidget(self.update_auto)
+        row = QHBoxLayout()
+        row.addWidget(label("Download speed"))
+        self.update_bandwidth = QComboBox()
+        for text, value in (("Adaptive   (recommended)", "adaptive"), ("Unlimited", "unlimited"), ("Custom limit", "custom")):
+            self.update_bandwidth.addItem(text, value)
+        self.update_bandwidth.currentIndexChanged.connect(self._bandwidth_changed)
+        row.addWidget(self.update_bandwidth, 1)
+        self.update_limit = QSpinBox()
+        row.addWidget(self.update_limit)
+        self.update_unit = QComboBox()
+        self.update_unit.addItem("KB/s", 1)
+        self.update_unit.addItem("MB/s", 1000)
+        self.update_unit.currentIndexChanged.connect(self._limit_unit_changed)
+        row.addWidget(self.update_unit)
+        box_layout.addLayout(row)
+        self.update_hint = label("", "hint", wrap=True)
+        box_layout.addWidget(self.update_hint)
+        row = QHBoxLayout()
+        self.check_button = button("Check for updates", on_click=win.check_for_updates)
+        row.addWidget(self.check_button)
+        self.update_status = label("", "hint", wrap=True)
+        row.addWidget(self.update_status, 1)
+        box_layout.addLayout(row)
+        layout.addWidget(box)
+
         box, box_layout = card("Advanced", "Everything else (for example which evidence counts) is in config.toml. "
                                            "Edit it only if you know why; a typo shows a warning and uses the default.")
         row = QHBoxLayout()
@@ -1368,7 +1417,31 @@ class SettingsPage(QWidget):
         self.snapshots.setEnabled(cfg["logging"]["enabled"])
         self.lossless.setChecked(cfg["capture"]["quality"] == "lossless")
         self.remember_window.setChecked(cfg["app"]["remember_window"])
+        update = cfg["update"]
+        self.update_auto.setChecked(update["check_automatically"])
+        self.update_bandwidth.setCurrentIndex(max(self.update_bandwidth.findData(update["download_bandwidth"]), 0))
+        limit = update["custom_limit_kb_per_second"]
+        in_mb = limit >= 1000 and limit % 1000 == 0
+        self.update_unit.setCurrentIndex(1 if in_mb else 0)
+        self._limit_unit_changed()
+        self.update_limit.setValue(limit // 1000 if in_mb else limit)
+        self._bandwidth_changed()
         self.saved.setText("")
+
+    def _bandwidth_changed(self, _index=None):
+        mode = self.update_bandwidth.currentData()
+        self.update_limit.setVisible(mode == "custom")
+        self.update_unit.setVisible(mode == "custom")
+        self.update_hint.setText({"adaptive": "About 1 MB/s while the app is counting, and no limit otherwise. It follows whether you are counting; "
+                                              "it does not measure your connection.",
+                                  "unlimited": "Never limited, even while counting.",
+                                  "custom": "Always limited to this speed."}.get(mode, ""))
+
+    def _limit_unit_changed(self, _index=None):
+        if self.update_unit.currentData() == 1000:
+            self.update_limit.setRange(1, settings.MAX_CUSTOM_LIMIT_KB // 1000)
+        else:
+            self.update_limit.setRange(settings.MIN_CUSTOM_LIMIT_KB, settings.MAX_CUSTOM_LIMIT_KB)
 
     def _fps_changed(self, _index=None):
         index = settings.fps_choice(self.fps.currentData())
@@ -1383,6 +1456,9 @@ class SettingsPage(QWidget):
                                                             "save_snapshots": self.snapshots.isChecked()})
             C.update_config_file(config_file(), "capture", {"quality": "lossless" if self.lossless.isChecked() else "standard"})
             C.update_config_file(config_file(), "app", {"remember_window": self.remember_window.isChecked()})
+            C.update_config_file(config_file(), "update", {"check_automatically": self.update_auto.isChecked(),
+                                                           "download_bandwidth": self.update_bandwidth.currentData(),
+                                                           "custom_limit_kb_per_second": self.update_limit.value() * self.update_unit.currentData()})
             if not self.remember_window.isChecked():
                 window_file().unlink(missing_ok=True)   # off = back to the default layout, also if switched on again later
         except (C.UserError, OSError) as error:
@@ -1507,6 +1583,101 @@ class HelpPage(QWidget):
 # main window
 # ==================================================================
 
+class UpdateDialog(QDialog):
+    """Not modal: counting and the rest of the app stay usable while an update is prepared, and closing this only hides it."""
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.win = win
+        self.setWindowTitle(f"{APP_NAME} update")
+        self.setMinimumWidth(540)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(10)
+        self.title = label("", "cardTitle", wrap=True)
+        layout.addWidget(self.title)
+        self.body = label("", "hint", wrap=True)
+        layout.addWidget(self.body)
+        self.notes = QPlainTextEdit()                    # plain text on purpose: release notes come from outside the app
+        self.notes.setReadOnly(True)
+        self.notes.setMinimumHeight(170)
+        layout.addWidget(self.notes)
+        self.stage = label("", wrap=True)
+        layout.addWidget(self.stage)
+        self.progress = QProgressBar()
+        self.progress.setTextVisible(False)
+        layout.addWidget(self.progress)
+        self.detail = label("", "hint", wrap=True)
+        layout.addWidget(self.detail)
+        self.problem = label("", wrap=True)
+        self.problem.setStyleSheet(f"color: {theme.REJECT};")
+        layout.addWidget(self.problem)
+        layout.addStretch(1)
+        row = QHBoxLayout()
+        self.page = button("View on GitHub", "link", on_click=self._open_page)
+        row.addWidget(self.page)
+        row.addStretch(1)
+        self.later = button("Later", on_click=self.hide)
+        row.addWidget(self.later)
+        self.cancel_button = button("Cancel", on_click=self._cancel)
+        row.addWidget(self.cancel_button)
+        self.primary = button("", "primary", on_click=self._primary)
+        row.addWidget(self.primary)
+        layout.addLayout(row)
+
+    def _open_page(self):
+        update = self.win.updates.update
+        if update is not None and update.release.page_url:
+            QDesktopServices.openUrl(QUrl(update.release.page_url))
+
+    def _cancel(self):
+        self.win.updates.cancel()
+        self.refresh()
+
+    def _primary(self):
+        if self.win.updates.state == UM.AVAILABLE:
+            self.win.download_update()
+        elif self.win.updates.state == UM.READY:
+            self.win.restart_and_install()
+
+    def refresh(self):
+        m = self.win.updates
+        version, state = m.version_text(), m.state
+        counting = bool(m.is_counting())
+        self.title.setText({UM.AVAILABLE: f"Version v{version} is available", UM.PREPARING: f"Preparing version v{version}",
+                            UM.READY: f"Version v{version} is ready to install", UM.INSTALLING: f"Installing version v{version}"}.get(state, ""))
+        self.body.setText({UM.AVAILABLE: "Your counts, profiles and settings are kept. You can keep counting while it downloads.",
+                           UM.PREPARING: "You can keep counting and close this window. This continues in the background.",
+                           UM.READY: "The app will close, install the update and reopen by itself. Your counts, profiles and settings are kept."
+                                     + (" Counting will stop first and your counts will be saved." if counting else ""),
+                           UM.INSTALLING: m.installing_text}.get(state, ""))
+        release = m.update.release if m.update is not None else None
+        show_notes = state in (UM.AVAILABLE, UM.READY) and release is not None
+        self.notes.setVisible(show_notes)
+        if show_notes and self.notes.toPlainText() != release.notes:
+            self.notes.setPlainText(release.notes)
+        preparing = state == UM.PREPARING
+        downloading = preparing and m.status.stage == "downloading" and m.status.total > 0
+        self.stage.setVisible(preparing)
+        self.stage.setText(m.stage_text() if preparing else "")
+        self.progress.setVisible(preparing or state == UM.INSTALLING)
+        self.progress.setRange(0, 100 if downloading else 0)             # a moving bar for steps with no meaningful percentage
+        if downloading:
+            self.progress.setValue(UM.percent(m.status))
+        self.detail.setVisible(preparing)
+        self.detail.setText(UM.progress_text(m.status) if preparing else "")
+        self.problem.setVisible(bool(m.error or m.notice))
+        self.problem.setText(m.error or m.notice)
+        self.problem.setStyleSheet(f"color: {theme.REJECT if m.error else theme.MUTED};")
+        self.page.setVisible(state in (UM.AVAILABLE, UM.READY) and release is not None and bool(release.page_url))
+        self.later.setVisible(state in (UM.AVAILABLE, UM.READY))
+        self.cancel_button.setVisible(preparing)
+        self.cancel_button.setEnabled(not m.cancelling)
+        self.primary.setVisible(state in (UM.AVAILABLE, UM.READY, UM.INSTALLING))
+        self.primary.setEnabled(state in (UM.AVAILABLE, UM.READY))
+        self.primary.setText({UM.AVAILABLE: "Try again" if m.error else "Download && Install", UM.READY: "Restart && Install"}.get(state, "Please wait..."))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1516,6 +1687,11 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(920, 640)
         self.window_file = None                 # set by restore_layout() for the real app window only (not tests / self-test)
         self.worker = Worker()
+        self.updates = UM.UpdateManager(is_counting=lambda: self.worker.running())
+        self.update_dialog = None
+        self._update_ticks = 0
+        self._install_pending = False           # counting is being stopped so that an update can be installed
+        self._result_watch_until = None         # started by the updater: wait for its verdict before saying anything
         self.mode = "stopped"
         self.counts = (0, 0)
         self.entries = deque(maxlen=LOG_LIMIT)
@@ -1613,6 +1789,9 @@ class MainWindow(QMainWindow):
         self.nav.setCurrentRow(0)
         self.nav.currentRowChanged.connect(self._page_changed)
         layout.addWidget(self.nav, 1)
+        self.update_link = button("", "link", on_click=self.open_update_dialog)
+        self.update_link.hide()
+        layout.addWidget(self.update_link)
         version = label(f"v{__version__} · {RELEASE_CHANNEL}", "version")
         version.setContentsMargins(20, 0, 0, 0)
         layout.addWidget(version)
@@ -1860,7 +2039,7 @@ class MainWindow(QMainWindow):
 
     def start_counting(self):
         data = self.dashboard.source.currentData()
-        if not data or self.worker.running():
+        if not data or self.worker.running() or self._install_pending or self.updates.state == UM.INSTALLING:
             return
         cfg, _ = load_cfg()
         argv = ["live", "--gui", "--profile", cfg["profile"]["id"]]
@@ -1962,6 +2141,125 @@ class MainWindow(QMainWindow):
         if version != self._obs_version:
             self._obs_version = version
             self.obs_status_changed(status)
+        self._update_ticks += 1
+        if self._update_ticks % 4 == 0 and self.updates.poll():
+            self.update_changed()
+
+    # ---- updates (update_manager.py holds the state; checking and preparing run on their own threads)
+    def after_start(self, installing=False):
+        """Called once the window is up. Not from the constructor, so the self-test can never touch the network."""
+        try:
+            update_install.clear_orphaned_journal()
+            if installing:                             # the updater started this copy to prove itself: its verdict comes later
+                self._result_watch_until = time.monotonic() + RESULT_WATCH_SECONDS
+                return
+            self.show_update_result()
+            if load_cfg()[0]["update"]["check_automatically"]:
+                QTimer.singleShot(AUTO_CHECK_DELAY_MS, self.auto_check)
+        except Exception as error:                     # updates must never stop the app from opening
+            self.add_log({"type": "warn", "text": f"Could not check the last update ({type(error).__name__}: {error})."})
+
+    def auto_check(self):
+        if self.updates.check(manual=False):
+            self.update_changed()
+
+    def check_for_updates(self):
+        self.updates.check(manual=True)
+        self.update_changed()
+
+    def show_update_result(self):
+        """What the last installation did, once. -> True if there was a result."""
+        result = update_install.last_result()
+        if result is None:
+            if self._result_watch_until is None and update_install.transaction_left_open():
+                self.dashboard.show_notice("An update did not finish. Close the app and open it again from its .exe. If this message comes back, "
+                                           "extract the latest zip over the program folder. Your counts are safe.", theme.REJECT)
+            return False
+        self._result_watch_until = None
+        notice = UM.describe_result(result, __version__)
+        update_install.acknowledge_result()
+        if notice:
+            level, text = notice
+            self.dashboard.show_notice(text, {"success": theme.CERTAIN, "rolled_back": theme.APPROX}.get(level, theme.REJECT))
+            self.add_log({"type": "info" if level == "success" else "warn", "text": text})
+        QTimer.singleShot(8000, update_install.cleanup_finished)
+        return True
+
+    def update_changed(self):
+        m = self.updates
+        text = m.indicator_text()
+        self.update_link.setText(text)
+        self.update_link.setVisible(bool(text))
+        self.settings_page.update_status.setText(m.check_message)
+        self.settings_page.check_button.setEnabled(not m.busy())
+        self.dashboard.start.setEnabled(m.state != UM.INSTALLING and self.mode != "stopping")
+        if self.update_dialog is not None:
+            self.update_dialog.refresh()
+        if m.take_open_request():
+            self.open_update_dialog()
+        if m.take_install_started():
+            self.close()                               # the installer is waiting for this window to go
+
+    def open_update_dialog(self):
+        if self.update_dialog is None:
+            self.update_dialog = UpdateDialog(self)
+        self.update_dialog.refresh()
+        self.update_dialog.show()
+        self.update_dialog.raise_()
+
+    def download_update(self):
+        if self.updates.start_preparing(UM.bandwidth_policy(load_cfg()[0]["update"])):
+            self.update_changed()
+
+    def _install_blocker(self):
+        """Something that must finish first, so nothing still runs from the program folder when the installer starts."""
+        if QApplication.activeModalWidget() is not None:
+            return "Close the other open window first, then try again."
+        if self.help._thread is not None and self.help._thread.is_alive():
+            return "Wait for the diagnostics to finish, then try again."
+        return None
+
+    def restart_and_install(self):
+        m = self.updates
+        if m.state != UM.READY or self._install_pending:
+            return
+        blocker = self._install_blocker()
+        if blocker:
+            m.refuse_install(blocker)
+            self.update_changed()
+            return
+        if not self.worker.running():
+            self._launch_installer()
+            return
+        if not ask(self, "Stop counting and install?", f"Counting will stop and your counts will be saved. The app will then close, install v{m.version_text()} "
+                                                       "and reopen by itself.", "Stop counting and install"):
+            return
+        self._install_pending = True
+        m.begin_stopping()
+        self.stop_counting()
+        QTimer.singleShot(INSTALL_STOP_DEADLINE_MS, self._install_stop_deadline)
+        self.update_changed()
+
+    def _install_stop_deadline(self):
+        if self._install_pending:
+            self._refuse_install_after_stop()
+
+    def _refuse_install_after_stop(self):
+        self._install_pending = False
+        self.updates.refuse_install("Counting did not stop cleanly, so the update was not installed. Your counts are safe.")
+        self.set_mode("error" if self.error_seen else self.mode if self.worker.running() else "stopped")
+        self.update_changed()
+
+    def _launch_installer(self):
+        cfg, _ = load_cfg()
+        state_folder = Path(cfg["profile"]["state_base"]).parent
+        try:
+            state_dir = state_folder.resolve().relative_to(paths.APP_DIR.resolve()).as_posix()
+        except ValueError:
+            state_dir = str(state_folder)                  # kept outside the program folder by config.toml
+        data_paths = [state_folder, *(paths.APP_DIR / cfg[section][key] for section, key in (("state", "obs_dir"), ("logging", "dir"), ("capture", "dir")))]
+        self.updates.install(state_dir, data_paths)
+        self.update_changed()
 
     # ---- OBS WebSocket output (obs/link.py runs it in its own thread; this only configures and shows it)
     def apply_obs_settings(self, reconnect=False):
@@ -2073,6 +2371,12 @@ class MainWindow(QMainWindow):
                 self.error_seen = True
             self.set_mode("error" if self.error_seen else "stopped")
             self.read_state(force=True)
+            if self._install_pending:
+                if code in (0, None):                  # stopped and saved normally
+                    self._install_pending = False
+                    self._launch_installer()
+                else:
+                    self._refuse_install_after_stop()
             if self.quit_when_stopped:
                 self.close()
 
@@ -2130,6 +2434,11 @@ class MainWindow(QMainWindow):
                 show_error(self, str(error))
 
     def _tick_slow(self):
+        if self._result_watch_until is not None:
+            if time.monotonic() > self._result_watch_until:
+                self._result_watch_until = None
+            else:
+                self.show_update_result()
         if not self.worker.running():
             self.read_state()
         elif self.mode == "counting" and self.started_at is not None:
@@ -2342,6 +2651,8 @@ class MainWindow(QMainWindow):
             event.ignore()                       # closes for real when the worker has finished (see handle 'exit')
             return
         self.save_layout()
+        if self.update_dialog is not None:
+            self.update_dialog.hide()
         if self.preview_reader is not None:
             self.preview_reader.close()
         self.obs_link.stop(timeout=0.5)
@@ -2455,7 +2766,9 @@ def main(argv=None):
     sys.excepthook = _crash_hook(lambda: window)
     window.restore_layout()
     window.show()
-    if len(args) == 3 and args[0] == "--update-health":        # started by the updater: report only once the app is really up
+    installing = len(args) == 3 and args[0] == "--update-health"
+    if installing:                                             # started by the updater: report only once the app is really up
         from fortnite_chest_counter.update import health
         QTimer.singleShot(UPDATE_HEALTH_DELAY_MS, lambda: health.write_report(args[1], args[2]))
+    window.after_start(installing)
     return app.exec()
