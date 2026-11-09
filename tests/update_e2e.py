@@ -24,6 +24,7 @@ import threading
 import time
 import traceback
 import zipfile
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -153,8 +154,7 @@ def make_kit(base, out, max_path=MAX_KIT_PATH):
     replace_file(installed / "config.example.toml", (_REPOSITORY / "config.example.toml").read_bytes())
     key = ECC.generate(curve="ed25519")
     (out / "test_key.pem").write_text(key.export_key(format="PEM"), encoding="ascii")
-    trust = (lib / "update/trust.py").read_text(encoding="utf-8")
-    _set_source(lib / "update/trust.py", re.sub(r"(?m)^TRUSTED_PUBLIC_KEYS = .*$", "TRUSTED_PUBLIC_KEYS = " + repr((S.public_key_hex(key),)), trust))
+    _set_source(lib / "update/trust.py", f"TRUSTED_PUBLIC_KEYS = {(S.public_key_hex(key),)!r}\n")        # a test key: production keys never come here
     major, minor, patch = int(found[1]), int(found[2]), int(found[3])
     _write_listing(installed / "runtime", f"{major}.{minor}.{patch}")
     healthy, broken, later = (f"{major}.{minor}.{patch + n}" for n in (1, 2, 3))
@@ -300,6 +300,21 @@ class Session:
         changed = [name for name, data in USER_DATA.items() if (self.live / name).read_bytes() != data]
         assert not changed, f"user data changed: {changed}"
 
+    def assert_obs_text(self, seconds=60):
+        """The app writes the OBS file when it opens: it must show the counts that were there before the update."""
+        path = self.live / "obs_output" / "chest_counter.txt"
+        deadline = time.monotonic() + seconds
+        while True:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:                    # not written yet, or the app is replacing it right now
+                text = ""
+            if "41" in text and "57" in text:
+                return
+            if time.monotonic() >= deadline:
+                raise AssertionError(f"the OBS text does not show the saved counts: {text!r}")
+            time.sleep(0.5)
+
     def crash_helper(self, step):
         helper = self.update_dir / H.HELPER_FOLDER
         code = subprocess.run([str(helper / "python/python.exe"), "-B", "-c", CRASH_WRAPPER, json.dumps({"crash_at": step, "argv": ["install", str(self.live), "0"]})],
@@ -323,6 +338,7 @@ def scenario_healthy(s):
     assert s.launcher.read_bytes() != old_launcher, "the launcher was not replaced"
     s.assert_user_data()
     assert s.app_running(), "the new version should be open"
+    s.assert_obs_text()
     assert len(list((s.live / "state/backups").glob("before-v*"))) == 1
     s.stop_programs()
     assert I.cleanup_finished(s.live) is True
@@ -339,7 +355,8 @@ def scenario_failed_start(s):
     assert s.version() == s.info["base_version"] and s.info["base_version"] in s.real_version()
     s.assert_user_data()
     s.wait_app()
-    return f"rolled back ({result['detail']}); the old version reopened; user data unchanged"
+    s.assert_obs_text()
+    return f"rolled back ({result['detail']}); the old version reopened; user data unchanged; OBS text shows the saved counts"
 
 
 def scenario_damaged_data(s):
@@ -368,7 +385,8 @@ def scenario_crash_after_swap(s):
     assert s.version() == s.info["base_version"]
     s.assert_user_data()
     s.wait_app()
-    return "the real launcher restored the old version and opened it; user data unchanged"
+    s.assert_obs_text()
+    return "the real launcher restored the old version and opened it; user data unchanged; OBS text shows the saved counts"
 
 
 def scenario_chained(s):
@@ -384,8 +402,42 @@ def scenario_chained(s):
     return f"{first}; then the updated copy installed {s.info['next']} using its own helper"
 
 
-SCENARIOS = {"healthy": scenario_healthy, "failed-start": scenario_failed_start, "damaged-data": scenario_damaged_data,
-             "crash-after-swap": scenario_crash_after_swap, "chained": scenario_chained}
+SCENARIOS = {"healthy": scenario_healthy, "failed-start": scenario_failed_start, "crash-after-swap": scenario_crash_after_swap,
+             "damaged-data": scenario_damaged_data, "chained": scenario_chained}                # in the order they must pass
+
+
+def earlier_scenario_not_passed(kit, name):
+    """The first scenario before `name` without a passing report, or None. A failure stops everything after it."""
+    for earlier in SCENARIOS:
+        if earlier == name:
+            return None
+        report = kit / "runs" / earlier / "report.txt"
+        if not report.exists() or not report.read_text(encoding="utf-8").startswith("PASS"):
+            return earlier
+    return None
+
+
+def summarize_security(output, kit):
+    """-> (Smart App Control state, Code Integrity blocks that involve the kit)."""
+    state, blocked = "unknown", []
+    for line in output.splitlines():
+        if line.startswith("STATE|"):
+            state = line[6:].strip() or "unknown"
+        elif line.startswith("BLOCK|") and Path(kit).name.lower() in line.lower():
+            blocked.append(line[6:].strip())
+    return state, blocked
+
+
+def security_during(kit, started):
+    """Read-only: what Windows code integrity did while the scenario ran. Nothing here changes a security setting."""
+    script = (f"$ErrorActionPreference='SilentlyContinue'; 'STATE|' + (Get-MpComputerStatus).SmartAppControlState; "
+              f"Get-WinEvent -FilterHashtable @{{LogName='Microsoft-Windows-CodeIntegrity/Operational'; Id=3033,3077; StartTime=[datetime]'{started:%Y-%m-%d %H:%M:%S}'}} "
+              f"| ForEach-Object {{ 'BLOCK|' + ($_.Message -replace '\\s+',' ') }}")
+    try:
+        output = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, creationflags=CREATE_NO_WINDOW).stdout
+    except (OSError, subprocess.SubprocessError):
+        output = ""
+    return summarize_security(output, kit)
 
 
 def drive(url, mode):
@@ -412,13 +464,24 @@ def run(name):
     if others:
         print("A real copy of the counter is running. Close it first:\n  " + "\n  ".join(others))
         return 2
+    missing = earlier_scenario_not_passed(kit, name)
+    if missing:
+        print(f"'{missing}' has to pass before '{name}' can run. Stop and report any failure.")
+        return 2
     session = Session(kit, name)
+    started = datetime.now()
     try:
         detail, status = SCENARIOS[name](session), "PASS"
     except Exception:
         detail, status = traceback.format_exc() + "\nInstall log:\n" + session.install_log() + session.prepare_log(), "FAIL"
     finally:
         session.close()
+    state, blocked = security_during(kit, started)
+    if blocked:
+        status = "FAIL"
+    detail += f"\nSmart App Control: {state}\nFiles from this kit blocked by Windows during the run: {len(blocked)}"
+    if blocked:
+        detail += "\n  " + "\n  ".join(blocked[:10])
     report = f"{status}  {name}\n{detail}\n"
     print(report)
     session.folder.mkdir(parents=True, exist_ok=True)

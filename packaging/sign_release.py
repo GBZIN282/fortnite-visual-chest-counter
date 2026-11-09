@@ -4,9 +4,10 @@ Create update-signing keys and sign a release.   (Maintainer only: never shipped
     python packaging/sign_release.py keygen --out "<a path outside this repository>"
     python packaging/sign_release.py sign --version 0.2.3 --zip build_out/v0.2.3/Fortnite-Visual-Chest-Counter-v0.2.3.zip \
         --key "<key file outside this repository>" [--key "<a second key, while keys are being changed>"]
+    python packaging/sign_release.py check-key --key "<key file>"
 
-`sign` writes update-manifest.json and update-manifest.json.sig next to the zip. Private keys are refused if they are inside
-this repository, and they are only ever stored encrypted with a passphrase.
+`sign` writes update-manifest.json and update-manifest.json.sig next to the zip. Private keys are refused inside this repository or
+a cloud-synced folder, and are only ever stored encrypted with a passphrase. Only public keys are ever printed.
 """
 
 import argparse
@@ -25,11 +26,15 @@ from fortnite_chest_counter.update.releases import MANIFEST_NAME, SIGNATURE_NAME
 
 MIN_PASSPHRASE = 16
 PROTECTION = "scryptAndAES256-CBC"
+_SYNCED_FOLDERS = ("onedrive", "dropbox", "google drive", "googledrive", "icloud drive", "iclouddrive", "box sync")
 
 
-def _refuse_inside_repository(path):
-    if Path(path).resolve().is_relative_to(ROOT):
-        raise SystemExit(f"Refusing: {path} is inside the repository. Private keys must be kept outside it.")
+def _refuse_unsafe_location(path):
+    resolved = Path(path).resolve()
+    if resolved.is_relative_to(ROOT):
+        raise SystemExit("Refusing: that key file is inside the repository. Private keys must be kept outside it.")
+    if any(part.lower().startswith(_SYNCED_FOLDERS) for part in resolved.parts):
+        raise SystemExit("Refusing: that key file is in a cloud-synced folder. Private keys must not be uploaded anywhere.")
 
 
 def public_key_hex(key):
@@ -38,25 +43,26 @@ def public_key_hex(key):
 
 def create_key(path, passphrase):
     """Write a new encrypted private key to `path`, which must be outside the repository and not exist yet. -> the key."""
-    _refuse_inside_repository(path)
+    _refuse_unsafe_location(path)
     if len(passphrase) < MIN_PASSPHRASE:
         raise SystemExit(f"The passphrase must be at least {MIN_PASSPHRASE} characters long.")
     key = ECC.generate(curve="ed25519")
     pem = key.export_key(format="PEM", passphrase=passphrase, protection=PROTECTION)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(path, "x", encoding="ascii", newline="\n") as f:
             f.write(pem + "\n")
     except FileExistsError:
-        raise SystemExit(f"Refusing: {path} already exists. A key is never overwritten.") from None
+        raise SystemExit("Refusing: that key file already exists. A key is never overwritten.") from None
     return key
 
 
 def load_key(path, passphrase):
-    _refuse_inside_repository(path)
+    _refuse_unsafe_location(path)
     try:
         return ECC.import_key(Path(path).read_text(encoding="ascii"), passphrase=passphrase)
     except (ValueError, IndexError, TypeError):
-        raise SystemExit(f"Could not open {path}: wrong passphrase, or not a key file.") from None
+        raise SystemExit("Could not open the key file: wrong passphrase, or not a key file.") from None
 
 
 def sign_manifest(manifest_bytes, keys):
@@ -89,11 +95,22 @@ def _keygen(args):
     if passphrase != getpass.getpass("Repeat the passphrase: "):
         raise SystemExit("The passphrases do not match. No key was created.")
     key = create_key(args.out, passphrase)
-    print(f"Created {args.out}\nKey id     : {A.key_id(bytes.fromhex(public_key_hex(key)))}\nPublic key : {public_key_hex(key)}")
+    print(f"Created the encrypted key file.\nKey id     : {A.key_id(bytes.fromhex(public_key_hex(key)))}\nPublic key : {public_key_hex(key)}")
+    print("The public key is safe to share. The key file and its passphrase never are.")
+
+
+def describe_key(key, trusted):
+    public = public_key_hex(key)
+    return (f"Key id     : {A.key_id(bytes.fromhex(public))}\nPublic key : {public}\n"
+            f"In this copy's trust list: {'yes' if public in trusted else 'no'}")
+
+
+def _check_key(args):
+    print(describe_key(load_key(args.key, getpass.getpass("Passphrase: ")), A.TRUSTED_PUBLIC_KEYS))
 
 
 def _sign(args):
-    keys = [load_key(path, getpass.getpass(f"Passphrase for {path}: ")) for path in args.key]
+    keys = [load_key(path, getpass.getpass(f"Passphrase for key {number} of {len(args.key)}: ")) for number, path in enumerate(args.key, 1)]
     for path in sign_package(args.zip, args.version, keys):
         print(f"Wrote {path}")
     for key in keys:
@@ -111,5 +128,8 @@ if __name__ == "__main__":
     sign.add_argument("--zip", required=True, help="the release zip")
     sign.add_argument("--key", required=True, action="append", help="a private key file (repeat to sign with several)")
     sign.set_defaults(run=_sign)
+    check = commands.add_parser("check-key", help="prove a key file and its passphrase work, and print its public key")
+    check.add_argument("--key", required=True, help="a private key file")
+    check.set_defaults(run=_check_key)
     arguments = parser.parse_args()
     arguments.run(arguments)

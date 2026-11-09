@@ -183,7 +183,8 @@ launchers (.bat/.cmd/.ps1/.vbs/.lnk) or any executable other than the launcher, 
   separate process, with its licence and `FFMPEG-NOTICE.txt`. Do not ship a `--enable-gpl` build unless you also offer the complete
   corresponding source. Pin the archive you ship (its SHA-256 is written into the notice).
 * **Licences:** the project is MIT (`LICENSE`). The build copies the Python (PSF), NumPy and SciPy (BSD, incl. their bundled
-  OpenBLAS/LAPACK/gfortran notices) licence texts into `runtime/licenses/`. Attach the zip, `SHA256SUMS.txt` and
+  OpenBLAS/LAPACK/gfortran notices) licence texts into `runtime/licenses/`. Attach the zip, its two signing files, `SHA256SUMS.txt` and
   `ffmpeg-source-<commit>.tar.gz` to the GitHub release (LGPL v3: the corresponding source is offered next to the binary).
+  `packaging/check_release.py` verifies all five and is the source of that list; see [UPDATE_SIGNING.md](UPDATE_SIGNING.md).
   The FFmpeg source for a build: `https://github.com/FFmpeg/FFmpeg/archive/<commit>.tar.gz`.
 * **Module names:** avoid naming a module `sources` (it clashed with packaging tools in the past).

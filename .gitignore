@@ -31,6 +31,10 @@ build_out/
 *.spec
 *.zip
 
+# Signing keys belong outside this repository (packaging/sign_release.py refuses them here); this is a second safeguard
+*.pem
+*.key
+
 # IDE / OS
 .vscode/
 .idea/

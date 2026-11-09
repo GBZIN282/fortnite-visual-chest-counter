@@ -2,8 +2,8 @@
 
 Internal / developer note. Signing keys are covered in [UPDATE_SIGNING.md](UPDATE_SIGNING.md).
 
-**Current state:** the whole updater is built, including the app's window controls and settings, and passes the automated tests. **A real
-packaged installation and rollback have not yet passed**, and no production signing key exists, so no real update can be installed yet.
+**Current state:** the whole updater is built, including the app's window controls and settings, and passes the automated tests. Both
+production public keys are in the trust list. **A real packaged installation and rollback have not yet passed**, so v0.2.3 is not ready to publish.
 
 ## In the app
 
@@ -155,11 +155,15 @@ The automated tests use small installations. A real package still has to pass `t
 3. Run one scenario: `C:\fcc-kit\base\<build>\runtime\python\python.exe C:\fcc-kit\update_e2e.py run healthy`
 4. Read the printed result, also saved in `C:\fcc-kit\runs\<scenario>\report.txt`. Stop at the first failure or any sign of instability.
 
+The tool enforces the order below: a scenario refuses to run until every earlier one has a passing report. Each report also states the
+Smart App Control state and how many files from the kit Windows blocked during the run. Any block fails the scenario. The tool only
+reads this information and never changes a security setting.
+
 | Order | Scenario | What it proves |
 |---|---|---|
-| 1 | `healthy` | Real download, staging, swap, Qt window health report and commit |
-| 2 | `failed-start` | A real new version that will not start is rolled back and the old one reopens |
-| 3 | `crash-after-swap` | The helper dies with the new runtime in place, and the real launcher restores the old version |
+| 1 | `healthy` | Real download, staging, swap, Qt window health report and commit; the OBS text still shows the saved counts |
+| 2 | `failed-start` | A real new version that will not start is rolled back, the old one reopens, and the OBS text still shows the saved counts |
+| 3 | `crash-after-swap` | The helper dies with the new runtime in place, the real launcher restores the old version, and the OBS text still shows the saved counts |
 | 4 | `damaged-data` | Saved data the old version cannot read is restored, and the newer file is kept |
 | 5 | `chained` | An updated copy can install the next update with its own helper |
 

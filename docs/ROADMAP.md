@@ -58,7 +58,9 @@ recognition but turning detections into gameplay statistics:
 | Version | Milestone |
 |---|---|
 | v0.2.0 | Automatic chest counting and a usable desktop app (released) |
-| v0.2.1 | Livestream URL input (Twitch / YouTube, no OBS) + OBS compatibility: WebSocket overlay output, OBS projector input, analysis-rate presets (in development) |
+| v0.2.1 | Livestream URL input (Twitch / YouTube, no OBS) + OBS compatibility: WebSocket overlay output, OBS projector input, analysis-rate presets (released) |
+| v0.2.2 | Better detection (stacked pop-ups, smaller HUD), count profiles, chest types (released) |
+| v0.2.3 | Built-in updater with signed releases and automatic rollback; the last manual download (in validation) |
 | **v0.3.0** | **Match Tracking & Statistics Foundation** - the backend that makes statistics possible |
 | **v0.4.0** | **Statistics & Performance Analytics** - records, history and trends on top of v0.3.0 |
 

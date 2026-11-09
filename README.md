@@ -18,7 +18,7 @@ without revealing hidden information or providing gameplay assistance. See
 
 > Independent, unofficial project: not affiliated with, endorsed by or approved by Epic Games. "Fortnite" is a trademark of
 > Epic Games, Inc.
-> Status: **v0.2.2 public beta** (desktop app). Developed and tested during Fortnite Chapter 7 Season 5 (November 2026) -
+> Status: **v0.2.3 public beta** (desktop app). Developed and tested during Fortnite Chapter 7 Season 5 (November 2026) -
 > see [Fortnite compatibility](#fortnite-compatibility). Windows 10 / 11. Nothing to install.
 
 **Contents:** [The two numbers](#the-two-numbers-read-this-first) · [Download](#download) · [Choose your setup](#choose-your-setup) ·
@@ -151,6 +151,15 @@ behaviour can change at any time. A dual-PC setup is not a compliance guarantee 
 the game. Tournament or event rules can be stricter than normal play - check them if you compete.
 
 ## Updating
+
+**From v0.2.3 on, the app has a built-in updater.** Shortly after opening it checks for a new version and, if there is one, shows a
+small **Update available** link in the sidebar. Choose **Download & Install**: counting keeps running while the update is downloaded
+and prepared, and **Restart & Install** finishes it. Counts, profiles, settings and OBS sources are kept, and if a new version does
+not start properly the app returns to the previous one by itself. Nothing is downloaded or installed unless you choose to. The
+automatic check and the download speed are in **Settings > Updates**.
+
+**Getting v0.2.3 is one last manual download**, because older versions have no updater. Download it only from the official
+[GitHub releases page](https://github.com/GabrielGzS/fortnite-visual-chest-counter/releases).
 
 Your data is stored next to, not inside, the program files: `state\` (counts of every profile), `config.toml` (settings), `logs\`,
 `captures\`, `obs_output\` (re-created automatically). Easiest: close the app, extract the new ZIP **into the same folder** and

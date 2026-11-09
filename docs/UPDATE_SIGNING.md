@@ -5,9 +5,9 @@ Internal / maintainer note. User-facing docs do not need any of this.
 The built-in updater installs only releases signed with a private key that never leaves the maintainer's control. This file
 covers what that protects, where trust comes from, and how to create, store, use and replace the keys.
 
-**Current state (2026-11-08):** no production key exists yet and `TRUSTED_PUBLIC_KEYS` in
-[`update/trust.py`](../src/fortnite_chest_counter/update/trust.py) is empty, so every release is rejected. Development and
-tests use temporary keys generated during each test run.
+**Current state (2026-11-09):** both production keys exist, and their public halves are in `TRUSTED_PUBLIC_KEYS` in
+[`update/trust.py`](../src/fortnite_chest_counter/update/trust.py). Their private halves never enter this repository, a build or a test
+PC. Development and tests use temporary keys generated during each test run.
 
 ## What this protects
 
@@ -51,6 +51,7 @@ later update, so that download must come from the official GitHub release page.
 | `update-manifest.json` | The updater: what was released |
 | `update-manifest.json.sig` | The updater: the signature(s) of the manifest |
 | `SHA256SUMS.txt` | People checking a manual download |
+| `ffmpeg-source-<commit>.tar.gz` | The source the FFmpeg licence requires us to offer |
 
 `update-manifest.json` is canonical JSON on one line, with sorted keys, no spaces and a final newline. The same inputs always
 give the same bytes, and any other form is rejected:
@@ -79,12 +80,21 @@ install.
 Run this on a PC you trust, for each key, with a path outside the repository:
 
 ```powershell
-python packaging/sign_release.py keygen --out "D:\release-keys\fcc-update-primary.pem"
-python packaging/sign_release.py keygen --out "E:\offline\fcc-update-recovery.pem"
+python packaging/sign_release.py keygen --out "<a folder outside the repository>\<primary key file>"
+python packaging/sign_release.py keygen --out "<offline media>\<recovery key file>"
 ```
 
 The tool asks for a passphrase of at least 16 characters, encrypts the file, never overwrites an existing key and refuses a path
-inside this repository. It prints each public key: add both to `TRUSTED_PUBLIC_KEYS`.
+inside this repository or a cloud-synced folder. It prints each public key: add both to `TRUSTED_PUBLIC_KEYS`.
+
+To prove later that a key file and its passphrase still work, without signing anything:
+
+```powershell
+python packaging/sign_release.py check-key --key "<key file>"
+```
+
+It prints only the key id, the public key, and whether this copy of the code trusts it. None of these tools reports where a key file
+is kept, so their output can be shared safely.
 
 ## Storing the keys
 
@@ -94,12 +104,36 @@ inside this repository. It prints each public key: add both to `TRUSTED_PUBLIC_K
 
 ## Signing a release
 
-1. Build the release zip as usual.
+1. Build the release zip (see below). The build refuses to start unless `TRUSTED_PUBLIC_KEYS` holds both production keys and every
+   Python package matches `packaging/build-requirements.txt`. There is no option to skip either check.
 2. Sign it: `python packaging/sign_release.py sign --version X.Y.Z --zip <the zip> --key <primary key file>`
-3. Upload the zip and both signing files to a **draft** release, then publish it, so a half-uploaded release is never visible.
+3. Check it: `python packaging/check_release.py --out <the folder holding the zip> --inputs <the folder holding the build inputs>`
+4. Upload all five files it lists to a **draft** release, then publish it, so a half-uploaded release is never visible.
 
-The release process must refuse to publish without both signing files, and a release build must fail unless `TRUSTED_PUBLIC_KEYS`
-holds both production keys. Both checks are still to be added, together with the production keys.
+Sign with the primary key. The recovery key stays offline unless the primary is lost or stolen.
+
+`check_release.py` is the last gate. Nothing may be published unless it passes: the signature verifies with the trust list inside
+the zip, the manifest matches the zip and the exact version, the package passes the same inspection the updater applies, every updater
+module is present, `package-files.json` is exact, the launcher is for this version, the shipped packages are exactly the pinned ones,
+the embedded Python is the official one (apart from the single line the build adds to its `._pth` file), the zip's trust list matches
+this repository's, `SHA256SUMS.txt` matches both the zip and the FFmpeg source archive, the release notes exist, and no private key is
+in or beside the release. A publish step must take its file list from `check_release.verified_assets()`, which raises instead of
+returning a list for a release that fails.
+
+Two locations inside the package are exempt from the private-key scan because they are public by design: `certifi/cacert.pem` (the
+certificate bundle) and `Crypto/SelfTest/` (the crypto library's published test keys).
+
+## Building on another PC
+
+Signing stays on the PC holding the keys. **The private keys never go to a build or test PC.** The build needs only the public keys,
+which are already in the source.
+
+1. On the build PC: `python packaging/build_release.py --preflight --python-embed <zip> --ffmpeg-zip <zip> --ffmpeg-source <archive> --out <short path>`.
+   It builds and changes nothing, and reports each requirement, including whether `gcc` and `windres` can run there.
+2. The compiler programs are not Authenticode-signed, so a PC with Smart App Control on may refuse them. In that case, compile only
+   the launcher on the release PC, which takes seconds: `python packaging/build_release.py --launcher-only --out <folder>`. Then add
+   `--prebuilt-launcher <that exe>` on the build PC, for the preflight and the build. A launcher for another version is refused.
+3. Build on the build PC, bring the zip back, and sign and check it on the PC holding the keys.
 
 ## Changing keys
 

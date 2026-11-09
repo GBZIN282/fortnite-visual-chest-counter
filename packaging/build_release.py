@@ -44,8 +44,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from fortnite_chest_counter.version import APP_NAME, __version__     # noqa: E402
 from fortnite_chest_counter.update.install_helper import PACKAGE_FILES   # noqa: E402
+from fortnite_chest_counter.update.trust import TRUSTED_PUBLIC_KEYS      # noqa: E402
 
 PACKAGE = "fortnite_chest_counter"
+REQUIREMENTS = ROOT / "packaging" / "build-requirements.txt"
+MIN_FREE_BYTES = 3 * 1024 ** 3
+DEEPEST_PACKAGE_PATH = 110                                      # characters below the package folder, measured on v0.2.2 + a margin
+MAX_WINDOWS_PATH = 259
 TEMPLATE_FILES = ["chest/en/chest.npy", "chest/en/chest_small.npy", "chest/en/rare.npy", "chest/en/rare_small.npy",
                   "chest/en/sprite.npy", "chest/en/sprite_small.npy", "chest/pt/bau.npy", "container_opened.npy",
                   "ui/interaction_disc.npy", "ui/interaction_ring.npy"]                    # audio_fingerprint.npy is development-only
@@ -110,6 +115,91 @@ END
 
 def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def check_update_keys(keys):
+    """What is wrong with the update keys this build would ship. -> [problems]. A copy installed without them could never accept an
+    update, and installed copies can only ever trust what they shipped with. Two keys: the primary and the offline recovery key."""
+    problems, good = [], set()
+    for key in keys:
+        if isinstance(key, str) and re.fullmatch(r"[0-9a-fA-F]{64}", key):
+            good.add(key.lower())
+        else:
+            problems.append(f"not a 32-byte public key: {str(key)[:24]}")
+    if len(good) < 2:
+        problems.append(f"update/trust.py must hold both production public keys (primary and recovery); it has {len(good)}")
+    return problems
+
+
+def pinned_packages():
+    """{package: version}: what a release is built from."""
+    lines = REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+    return dict(line.strip().split("==") for line in lines if "==" in line and not line.startswith("#"))
+
+
+def package_version_problems():
+    """Every Python package that differs from the versions releases are built from. -> [problems]."""
+    wrong = []
+    for name, wanted in pinned_packages().items():
+        try:
+            have = md.version(name)
+        except md.PackageNotFoundError:
+            have = "not installed"
+        if have != wanted:
+            wrong.append(f"{name} is {have}, needs {wanted}")
+    return wrong
+
+
+def check_prebuilt_launcher(path):
+    """A launcher compiled elsewhere must be for this exact version."""
+    if __version__.encode("utf-16-le") not in Path(path).read_bytes():
+        raise SystemExit(f"{path} was not built for version {__version__}.")
+
+
+def preflight(python_embed, ffmpeg_zip, ffmpeg_source, mingw, out, prebuilt_launcher=None):
+    """Can this PC build a release? Builds nothing and changes nothing. -> 0 if everything needed is here."""
+    rows = []
+
+    def row(name, ok, detail=""):
+        rows.append(ok)
+        print(f"  {'ok     ' if ok else 'MISSING'}  {name}{f'   ({detail})' if detail else ''}")
+
+    embed_version = re.search(r"python-(\d+)\.(\d+)\.", Path(python_embed or "").name)
+    here = f"{sys.version_info.major}.{sys.version_info.minor}"
+    row("Python version matches the embeddable runtime", bool(embed_version) and f"{embed_version[1]}.{embed_version[2]}" == here, f"running {sys.version.split()[0]}")
+    for name, path in (("embeddable Python zip", python_embed), ("FFmpeg zip", ffmpeg_zip), ("FFmpeg source archive", ffmpeg_source)):
+        row(name, bool(path) and Path(path).is_file(), str(path))
+    wrong = package_version_problems()
+    row("Python packages match build-requirements.txt", not wrong, "; ".join(wrong))
+    if prebuilt_launcher:
+        row("prebuilt launcher", Path(prebuilt_launcher).is_file(), str(prebuilt_launcher))
+    else:
+        env_path = (str(mingw) + os.pathsep if mingw else "") + os.environ.get("PATH", "")
+        for tool in ("gcc", "windres"):
+            found = shutil.which(tool, path=env_path)
+            try:
+                works = bool(found) and subprocess.run([found, "--version"], capture_output=True, timeout=30).returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                works = False                  # Smart App Control refuses unsigned programs here: use --prebuilt-launcher
+            row(f"{tool} runs on this PC", works, "if it is blocked, use --prebuilt-launcher" if not works else "")
+    try:
+        status = authenticode([Path(sys.base_prefix) / "python.exe"])
+        row("Windows signature checks work", any(s == "Valid" for s, _ in status.values()))
+    except (OSError, subprocess.SubprocessError):
+        row("Windows signature checks work", False)
+    keys = check_update_keys(TRUSTED_PUBLIC_KEYS)
+    row("both production public keys are in update/trust.py", not keys, "; ".join(keys))
+    anchor = next(p for p in (Path(out).resolve(), *Path(out).resolve().parents) if p.exists())
+    row("at least 3 GB free where the build goes", shutil.disk_usage(anchor).free >= MIN_FREE_BYTES)
+    length = len(str(Path(out).resolve())) + 1 + len(f"Fortnite-Visual-Chest-Counter-v{__version__}") + 1 + DEEPEST_PACKAGE_PATH
+    row("the build folder path is short enough", length <= MAX_WINDOWS_PATH, f"{length} of {MAX_WINDOWS_PATH} characters")
+    try:
+        state = subprocess.run(["powershell", "-NoProfile", "-Command", "(Get-MpComputerStatus).SmartAppControlState"], capture_output=True, text=True, timeout=60).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        state = ""
+    print(f"  info     Smart App Control: {state or 'unknown'}")
+    print("This PC can build the release." if all(rows) else "This PC cannot build the release yet: see MISSING above.")
+    return 0 if all(rows) else 1
 
 
 def authenticode(paths):
@@ -224,7 +314,15 @@ def audit(app_root):
     print("Release audit passed: no samples, logs, saved counts, scripts or unexpected executables; OBS files start at 0.")
 
 
-def build(out, python_embed, ffmpeg_zip, ffmpeg_source, mingw=None):
+def build(out, python_embed, ffmpeg_zip, ffmpeg_source, mingw=None, prebuilt_launcher=None):
+    key_problems = check_update_keys(TRUSTED_PUBLIC_KEYS)
+    if key_problems:
+        raise SystemExit("Refusing to build a release that could never accept an update:\n  " + "\n  ".join(key_problems))
+    wrong_packages = package_version_problems()
+    if wrong_packages:
+        raise SystemExit("Refusing to build with packages that differ from packaging/build-requirements.txt:\n  " + "\n  ".join(wrong_packages))
+    if prebuilt_launcher:
+        check_prebuilt_launcher(prebuilt_launcher)
     app_root = out / f"Fortnite-Visual-Chest-Counter-v{__version__}"
     shutil.rmtree(app_root, ignore_errors=True)
     if app_root.exists():
@@ -346,7 +444,11 @@ def build(out, python_embed, ffmpeg_zip, ffmpeg_source, mingw=None):
         shutil.copy2(ROOT / "packaging" / "licenses" / name, lic / name)
 
     # ---- 5. the launcher + user-facing files
-    gcc = build_launcher(app_root / EXE_NAME, out / "_launcher-build", mingw)
+    if prebuilt_launcher:
+        shutil.copy2(prebuilt_launcher, app_root / EXE_NAME)
+        gcc = "a prebuilt launcher (compiled from the same source on the release PC)"
+    else:
+        gcc = build_launcher(app_root / EXE_NAME, out / "_launcher-build", mingw)
     provenance += [f"launcher        : {EXE_NAME} built from packaging/launcher/launcher.c with {gcc}",
                    f"                  SHA-256 {sha256(app_root / EXE_NAME)} (reproducible: no timestamps)", ""]
     shutil.copy2(ROOT / "packaging" / "README.html", app_root / "README.html")
@@ -392,10 +494,22 @@ def build(out, python_embed, ffmpeg_zip, ffmpeg_source, mingw=None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--python-embed", required=True, help="python-3.X.Y-embed-amd64.zip from python.org (same 3.X as this Python)")
-    ap.add_argument("--ffmpeg-zip", required=True, help="a win64 LGPL ffmpeg build zip (see packaging/FFMPEG-NOTICE.txt)")
-    ap.add_argument("--ffmpeg-source", required=True, help="the FFmpeg source archive of the exact bundled commit")
+    ap.add_argument("--python-embed", help="python-3.X.Y-embed-amd64.zip from python.org (same 3.X as this Python)")
+    ap.add_argument("--ffmpeg-zip", help="a win64 LGPL ffmpeg build zip (see packaging/FFMPEG-NOTICE.txt)")
+    ap.add_argument("--ffmpeg-source", help="the FFmpeg source archive of the exact bundled commit")
     ap.add_argument("--mingw", help="folder holding MinGW gcc.exe + windres.exe if they are not on PATH")
     ap.add_argument("--out", default=str(ROOT / "build_out"))
+    ap.add_argument("--preflight", action="store_true", help="only report whether this PC can build the release")
+    ap.add_argument("--launcher-only", action="store_true", help="only compile the launcher (seconds of work), to use with --prebuilt-launcher elsewhere")
+    ap.add_argument("--prebuilt-launcher", help="use this launcher instead of compiling one, on a PC that cannot run the compiler")
     a = ap.parse_args()
-    build(Path(a.out), Path(a.python_embed), Path(a.ffmpeg_zip), Path(a.ffmpeg_source), a.mingw)
+    if a.preflight:
+        sys.exit(preflight(a.python_embed, a.ffmpeg_zip, a.ffmpeg_source, a.mingw, a.out, a.prebuilt_launcher))
+    if a.launcher_only:
+        Path(a.out).mkdir(parents=True, exist_ok=True)
+        build_launcher(Path(a.out) / EXE_NAME, Path(a.out) / "_launcher-build", a.mingw)
+        print(f"Built {Path(a.out) / EXE_NAME} for v{__version__}\nSHA-256 {sha256(Path(a.out) / EXE_NAME)}")
+        sys.exit(0)
+    if not (a.python_embed and a.ffmpeg_zip and a.ffmpeg_source):
+        ap.error("--python-embed, --ffmpeg-zip and --ffmpeg-source are required to build")
+    build(Path(a.out), Path(a.python_embed), Path(a.ffmpeg_zip), Path(a.ffmpeg_source), a.mingw, a.prebuilt_launcher)
