@@ -30,6 +30,7 @@ import compileall
 import csv
 import hashlib
 import importlib.metadata as md
+import json
 import os
 import re
 import shutil
@@ -42,6 +43,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from fortnite_chest_counter.version import APP_NAME, __version__     # noqa: E402
+from fortnite_chest_counter.update.install_helper import PACKAGE_FILES   # noqa: E402
 
 PACKAGE = "fortnite_chest_counter"
 TEMPLATE_FILES = ["chest/en/chest.npy", "chest/en/chest_small.npy", "chest/en/rare.npy", "chest/en/rare_small.npy",
@@ -184,6 +186,13 @@ def signature_report(app_root):
                f"  not signed: {len(unsigned)}",
                *(f"      {n:4d}  {k}" for k, n in sorted(groups.items()))]
     return summary, listing
+
+
+def write_package_files(runtime):
+    """runtime/package-files.json: everything this release puts in runtime/. The updater uses it to notice anything else in there."""
+    files = sorted(p.relative_to(runtime).as_posix() for p in runtime.rglob("*") if p.is_file())
+    (runtime / PACKAGE_FILES).write_text(json.dumps({"format": 1, "version": __version__, "files": files}, indent=0) + "\n",
+                                         encoding="utf-8", newline="\n")
 
 
 def audit(app_root):
@@ -361,6 +370,7 @@ def build(out, python_embed, ffmpeg_zip, ffmpeg_source, mingw=None):
     (runtime / "PROVENANCE.txt").write_text("\n".join(provenance) + "\n", encoding="utf-8")
     (out / "SIGNATURES.txt").write_text(f"{APP_NAME} v{__version__} - Authenticode signature of every executable file\n\n"
                                         + "\n".join(listing) + "\n", encoding="utf-8")
+    write_package_files(runtime)
 
     audit(app_root)
 

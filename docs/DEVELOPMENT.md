@@ -25,8 +25,8 @@ src/fortnite_chest_counter/
   progress.py       time-left estimates from measured throughput (Analyse a recording, Review captures)
   update/           built-in updater (v0.2.3): releases.py (GitHub discovery), authenticity.py + trust.py (signed manifest,
                     installed public keys), check.py (one background check), download.py (resume, speed modes), archive.py
-                    (zip safety and layout), staging.py (unpack + start-up checks), prepare.py (the background job).
-                    See UPDATER.md and UPDATE_SIGNING.md
+                    (zip safety and layout), staging.py (unpack + start-up checks), prepare.py (the background job), install.py
+                    + install_helper.py (replace, prove, roll back), health.py. See UPDATER.md and UPDATE_SIGNING.md
   templates/        runtime detector templates (.npy) - tracked in Git, REQUIRED at runtime
 packaging/          build_release.py (embeddable Python + verified numpy/scipy/PySide6 + bundled ffmpeg + launcher + zip),
                     launcher/ (launcher.c, manifest, app.ico), make_icon.py, README.html, notices, licenses/ (LGPL/GPL texts),

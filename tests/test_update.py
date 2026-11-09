@@ -441,6 +441,10 @@ def test_the_update_server_cannot_be_changed_from_outside():
     folder = ROOT / "src" / "fortnite_chest_counter" / "update"
     for file in folder.glob("*.py"):
         text = file.read_text(encoding="utf-8")
+        if file.name == "install_helper.py":                                  # a separate program: its arguments are only a folder and a pid
+            for forbidden in ("os.environ", "getenv", "urllib", "http.client", "TRUSTED_PUBLIC_KEYS", "https://"):
+                assert forbidden not in text, f"{file.name} uses {forbidden}"
+            continue
         for forbidden in ("os.environ", "getenv", "sys.argv", "load_config", "import tomllib", "import settings"):
             assert forbidden not in text, f"{file.name} uses {forbidden}"
 

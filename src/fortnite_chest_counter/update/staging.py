@@ -24,8 +24,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fortnite_chest_counter.update import archive, authenticity as A
-from fortnite_chest_counter.update.download import SPACE_MARGIN, cancelled, disk_errors, ensure_folder, never, require_space
-from fortnite_chest_counter.update.releases import UpdateError
+from fortnite_chest_counter.update.download import SPACE_MARGIN, cancelled, disk_errors, ensure_folder, never, replace_when_free, require_space
+from fortnite_chest_counter.update.install_helper import while_locked
+from fortnite_chest_counter.update.releases import MANIFEST_NAME, SIGNATURE_NAME, UpdateError
 
 UPDATE_FOLDER = ".update"
 PARTIAL_FOLDER = "new.partial"
@@ -54,10 +55,13 @@ report = {"version": version.__version__, "app_dir": str(paths.APP_DIR), "packag
           "missing_templates": [str(p) for p in paths.missing_templates()], "ffmpeg": paths.ffmpeg_executable()}
 try:
     from Crypto.Signature import eddsa
+    from fortnite_chest_counter.update import health, install, install_helper
     from fortnite_chest_counter.update.trust import TRUSTED_PUBLIC_KEYS
     report["update_keys"] = len(TRUSTED_PUBLIC_KEYS)
-except ImportError:
-    report["update_keys"] = 0
+    listing = json.loads((paths.APP_DIR / install_helper.RUNTIME / install_helper.PACKAGE_FILES).read_text(encoding="utf-8"))
+    report["package_files"] = len(listing["files"])
+except (ImportError, OSError, ValueError, KeyError):
+    report["update_keys"] = report["package_files"] = 0
 with open(REPORT_PATH, "w", encoding="utf-8") as f:
     json.dump(report, f)
 """
@@ -103,9 +107,10 @@ def _remove(path):
             else:
                 path.unlink(missing_ok=True)
             return
-        except OSError:
+        except OSError as error:
             if attempt == REMOVE_TRIES - 1:
-                raise UpdateError("cleanup_failed", "Old update files could not be removed. Please try again.") from None
+                raise UpdateError("cleanup_failed", "Old update files could not be removed. Please try again.",
+                                  f"removing {path}: {type(error).__name__}: {error}") from None
             time.sleep(REMOVE_DELAY)
 
 
@@ -114,7 +119,7 @@ def discard_staging(update_dir):
     update_dir = Path(update_dir)
     if update_dir.name != UPDATE_FOLDER:
         raise ValueError(f"not an update folder: {update_dir}")
-    for name in (MARKER_NAME, PARTIAL_FOLDER, STAGED_FOLDER, REPORT_FOLDER):
+    for name in (MARKER_NAME, MANIFEST_NAME, SIGNATURE_NAME, PARTIAL_FOLDER, STAGED_FOLDER, REPORT_FOLDER):
         _remove(update_dir / name)
 
 
@@ -126,7 +131,7 @@ def verify_tree(folder, plan, pace):
     """The folder must hold exactly the planned files, byte for byte (size and CRC-32 from the zip)."""
     expected = {f.path: f for f in plan.files}
     found = set()
-    with disk_errors():
+    with disk_errors("checking the unpacked files"):
         for current, folders, names in os.walk(folder):
             base = Path(current)
             if any(_is_link(base / name) for name in folders):
@@ -140,7 +145,7 @@ def verify_tree(folder, plan, pace):
                 if file.stat().st_size != item.size:
                     raise _corrupt(f"wrong size for {relative}")
                 crc = 0
-                with open(file, "rb") as f:
+                with while_locked(open, file, "rb") as f:
                     while chunk := f.read(archive.CHUNK):
                         crc = zlib.crc32(chunk, crc)
                         pace(len(chunk))
@@ -162,8 +167,8 @@ def _worker_check_command(staged, report):
 def _run_check(command, report_path, staged, timeout, cancel):
     """Run one check at below-normal priority. -> (exit code, its report). -B: Python must not write new files into the package.
     Any earlier report is removed first, so a check that writes nothing can never be judged by an old result."""
-    with disk_errors():
-        report_path.unlink(missing_ok=True)
+    with disk_errors("clearing an old check report"):
+        while_locked(report_path.unlink, True)
     try:
         process = subprocess.Popen(command, cwd=staged, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS)
@@ -214,13 +219,15 @@ def run_staged_checks(staged, report_dir, version, cancel, require_updater=True)
             or report.get("missing_templates") != [] or not _same_folder(report.get("app_dir"), staged) \
             or not _inside(report.get("ffmpeg"), staged):
         raise UpdateError("self_test_failed", _FAILED + " (Its program files did not load.)")
-    if require_updater and not (type(report.get("update_keys")) is int and report["update_keys"] > 0):
+    if require_updater and not all(type(report.get(key)) is int and report[key] > 0 for key in ("update_keys", "package_files")):
         raise UpdateError("self_test_failed", _FAILED + " (It could not install later updates.)")
     report_path = report_dir / "window.json"
     code, report = _run_check(_self_test_command(staged, report_path), report_path, staged, SELF_TEST_TIMEOUT, cancel)
     if code != 0 or report.get("ok") is not True or report.get("version") != version or report.get("packaged") is not True \
             or not _same_folder(report.get("app_dir"), staged):
         raise UpdateError("self_test_failed", _FAILED + " (Its window did not start.)")
+    if require_updater and report.get("update_health") is not True:
+        raise UpdateError("self_test_failed", _FAILED + " (It could not confirm a later update.)")
 
 
 def _read_marker(update_dir):
@@ -253,7 +260,7 @@ def _write_marker(update_dir, manifest, plan):
     temporary = update_dir / (MARKER_NAME + ".tmp")
     temporary.write_text(json.dumps({"format": MARKER_FORMAT, "version": manifest.version, "zip": manifest.zip, "sha256": manifest.sha256,
                                      "files": len(plan.files), "bytes": plan.total_size}), encoding="utf-8")
-    os.replace(temporary, update_dir / MARKER_NAME)
+    while_locked(os.replace, temporary, update_dir / MARKER_NAME)
 
 
 def stage_package(zip_path, update, update_dir, is_counting=never, cancel=None, on_stage=None, on_bytes=None, checks=run_staged_checks):
@@ -277,19 +284,21 @@ def stage_package(zip_path, update, update_dir, is_counting=never, cancel=None, 
         ensure_folder(partial)
         stage("extracting")
         pace = _Pacer(is_counting, cancel, on_bytes)
-        with disk_errors():
+        with disk_errors("unpacking the update"):
             archive.extract(zip_path, plan, partial, pace)
         stage("validating")
         verify = _Pacer(is_counting, cancel)
         verify_tree(partial, plan, verify)
-        with disk_errors():
-            os.replace(partial, staged)
+        with disk_errors("moving the unpacked files into place"):
+            replace_when_free(partial, staged, cancel)
         stage("checking")
         checks(staged, reports, manifest.version, cancel)
         for name in USER_OWNED:            # whatever the start-up checks created there; none of it is program files
             _remove(staged / name)
         verify_tree(staged, plan, verify)
-        with disk_errors():
+        with disk_errors("recording the prepared update"):
+            (update_dir / MANIFEST_NAME).write_bytes(update.manifest_bytes)
+            (update_dir / SIGNATURE_NAME).write_bytes(update.signature_bytes)
             _write_marker(update_dir, manifest, plan)
     except BaseException:
         try:

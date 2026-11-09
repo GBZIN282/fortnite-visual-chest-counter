@@ -34,11 +34,13 @@ _LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
 
 class UpdateError(Exception):
-    """An expected updater failure. `kind` is for the program; the message is written for the user."""
+    """An expected updater failure. `kind` is for the program; the message is written for the user; `detail` keeps the
+    technical cause (the operation and the system error) for the log."""
 
-    def __init__(self, kind, message):
+    def __init__(self, kind, message, detail=""):
         super().__init__(message)
         self.kind = kind
+        self.detail = detail
 
 
 @dataclass(frozen=True)

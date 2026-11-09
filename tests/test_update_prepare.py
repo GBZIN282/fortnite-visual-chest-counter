@@ -750,6 +750,99 @@ def test_a_disk_failure_while_unpacking_cleans_up():
         assert not (ws.update_dir / G.PARTIAL_FOLDER).exists() and not (ws.update_dir / G.MARKER_NAME).exists()
 
 
+def test_a_zip_briefly_held_open_is_still_finished():
+    with workspace() as ws, FileServer() as server:
+        update = server.update()
+        real = A.verify_package
+
+        def held_open_while_checked(path, manifest):
+            handle = open(path, "rb")                                         # as a virus scan would: the rename is refused until it closes
+            threading.Timer(0.3, handle.close).start()
+            real(path, manifest)
+
+        with patched(A, verify_package=held_open_while_checked), patched(D, RENAME_DELAY=0.05):
+            final = fetch(server, ws, update)
+        assert final.read_bytes() == BLOB
+
+
+def test_a_folder_briefly_held_open_is_still_moved_into_place():
+    def hold_a_file(ws):
+        def on_stage(name):
+            if name == "validating":
+                handle = open(ws.update_dir / G.PARTIAL_FOLDER / Z.VERSION_FILE, "rb")
+                threading.Timer(0.3, handle.close).start()
+        return on_stage
+
+    with workspace() as ws, patched(D, RENAME_DELAY=0.05):
+        staged = stage(ws, build_zip(), on_stage=hold_a_file(ws))
+        assert tree(staged.path) == sorted(program_files())
+
+
+def test_a_lock_that_never_clears_is_reported_with_its_real_cause():
+    with workspace() as ws, patched(D, RENAME_TRIES=2, RENAME_DELAY=0.01), patched(G, REMOVE_TRIES=1):
+        held = []
+
+        def on_stage(name):
+            if name == "validating":
+                held.append(open(ws.update_dir / G.PARTIAL_FOLDER / Z.VERSION_FILE, "rb"))
+
+        try:
+            error = expect("disk_error", stage, ws, build_zip(), on_stage=on_stage)
+        finally:
+            for handle in held:
+                handle.close()
+        assert "moving the unpacked files into place" in error.detail and "PermissionError" in error.detail, error.detail
+        assert "PermissionError" not in str(error), "the message is for the user"
+
+
+def test_a_failure_keeps_its_real_cause_for_the_log():
+    def refuse(*args):
+        raise OSError(errno.EIO, "the device is not responding", "C:/somewhere/file.bin")
+
+    package = build_zip()
+    with workspace() as ws, FileServer(package=package) as server, patched(Z, extract=refuse):
+        result = preparation(server, ws)
+        assert result.status == "failed" and result.kind == "disk_error"
+        assert "unpacking the update" in result.detail and "not responding" in result.detail and "somewhere" in result.detail, result.detail
+        assert "not responding" not in result.message
+        log = (ws.update_dir / "prepare.log").read_text(encoding="utf-8")
+        assert "disk_error" in log and "not responding" in log and "unpacking the update" in log
+
+
+def test_waiting_for_a_large_rename_is_bounded_and_can_be_cancelled():
+    calls = []
+
+    def locked(source, target):
+        calls.append(source)
+        raise PermissionError(13, "in use")
+
+    def missing(source, target):
+        calls.append(source)
+        raise FileNotFoundError(2, "gone")
+
+    with patched(D.os, replace=locked), patched(D, RENAME_TRIES=3, RENAME_DELAY=0.0):
+        try:
+            D.replace_when_free("a", "b", threading.Event())
+        except PermissionError:
+            assert len(calls) == 3
+        else:
+            raise AssertionError("it should give up")
+    cancel = threading.Event()
+    cancel.set()
+    with patched(D.os, replace=locked), patched(D, RENAME_TRIES=1000, RENAME_DELAY=30.0):
+        started = time.monotonic()
+        expect("cancelled", D.replace_when_free, "a", "b", cancel)
+        assert time.monotonic() - started < 2.0
+    calls.clear()
+    with patched(D.os, replace=missing), patched(D, RENAME_TRIES=50, RENAME_DELAY=0.0):
+        try:
+            D.replace_when_free("a", "b", threading.Event())
+        except FileNotFoundError:
+            assert len(calls) == 1, "only a lock is worth waiting for"
+        else:
+            raise AssertionError("it should fail at once")
+
+
 def test_cancelling_while_unpacking_removes_the_partial_folder():
     with workspace() as ws:
         cancel = threading.Event()
@@ -877,11 +970,11 @@ sys.exit(spec.get("code", 0))
 
 def good_worker(staged):
     return {"report": {"version": VERSION, "app_dir": str(staged), "packaged": True, "missing_templates": [],
-                       "ffmpeg": str(staged / "runtime" / "ffmpeg" / "ffmpeg.exe"), "update_keys": 2}}
+                       "ffmpeg": str(staged / "runtime" / "ffmpeg" / "ffmpeg.exe"), "update_keys": 2, "package_files": 4987}}
 
 
 def good_window(staged):
-    return {"report": {"ok": True, "version": VERSION, "packaged": True, "app_dir": str(staged)}}
+    return {"report": {"ok": True, "version": VERSION, "packaged": True, "app_dir": str(staged), "update_health": True}}
 
 
 @contextlib.contextmanager
@@ -939,8 +1032,12 @@ def test_the_checks_must_have_run_against_staging_and_not_the_live_folder():
 
 def test_a_new_version_that_could_not_update_itself_is_refused():
     with checks_folder() as folder:
-        expect("self_test_failed", run_checks, folder, changed(good_worker(folder.staged), update_keys=0), good_window(folder.staged))
-        run_checks(folder, changed(good_worker(folder.staged), update_keys=0), good_window(folder.staged), require_updater=False)
+        worker, window = good_worker(folder.staged), good_window(folder.staged)
+        for bad in (changed(worker, update_keys=0), changed(worker, package_files=0), changed(worker, package_files=None)):
+            expect("self_test_failed", run_checks, folder, bad, window)
+        for bad in (changed(window, update_health=False), changed(window, update_health=None)):
+            expect("self_test_failed", run_checks, folder, worker, bad)
+        run_checks(folder, changed(worker, update_keys=0, package_files=0), changed(window, update_health=False), require_updater=False)
 
 
 def test_an_old_report_can_never_pass_a_check_that_wrote_nothing():

@@ -15,6 +15,7 @@ import ctypes
 import threading
 from ctypes import wintypes
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 
 from fortnite_chest_counter import paths
@@ -40,6 +41,15 @@ class PreparationResult:
     message: str
     kind: str | None = None
     staged: staging.StagedPackage | None = None
+    detail: str = ""                       # the technical cause, also written to .update/prepare.log
+
+
+def _log_failure(folder, error):
+    try:
+        with open(folder / "prepare.log", "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {error.kind}: {error} [{error.detail}]\n")
+    except OSError:
+        pass
 
 
 def update_folder(app_dir=None):
@@ -63,9 +73,10 @@ def prepare_update(update, app_dir=None, source=GITHUB, policy=None, is_counting
     except UpdateError as error:
         if error.kind == "cancelled":
             return PreparationResult("cancelled", str(error), error.kind)
+        _log_failure(folder, error)
         if error.kind in _REJECTED_PACKAGES and zip_path is not None:
             zip_path.unlink(missing_ok=True)
-        return PreparationResult("failed", str(error), error.kind)
+        return PreparationResult("failed", str(error), error.kind, detail=error.detail)
     return PreparationResult("ready", f"Version v{update.manifest.version} is ready to install.", staged=staged)
 
 

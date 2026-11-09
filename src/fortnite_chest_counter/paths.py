@@ -11,6 +11,7 @@ User data (APP_DIR) and program files (RESOURCE_DIR) are deliberately separate s
 replace the program without touching the user's counts or settings.
 """
 
+import hashlib
 import os
 import shutil
 import sys
@@ -61,6 +62,11 @@ REQUIRED_TEMPLATES = [
     TEMPLATES_DIR / "ui" / "interaction_disc.npy",
     TEMPLATES_DIR / "ui" / "interaction_ring.npy",
 ]
+
+
+def app_mutex_name():
+    """One app window per program folder. Windows releases this however the app ends."""
+    return "Local\\FortniteVisualChestCounter-App-" + hashlib.sha1(str(APP_DIR).lower().encode()).hexdigest()[:16]
 
 
 def bundled_ffmpeg_dir():

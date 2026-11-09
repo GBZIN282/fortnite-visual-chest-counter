@@ -176,8 +176,8 @@ def inspect(zip_path, manifest):
             _check_program_files(archive, plan, manifest.version)
     except _READ_ERRORS:
         raise UpdateError("archive_invalid", f"{_UNSAFE} (The package is damaged.)") from None
-    except OSError:
-        raise UpdateError("package_unreadable", "The downloaded update could not be read. Please try again.") from None
+    except OSError as error:
+        raise UpdateError("package_unreadable", "The downloaded update could not be read. Please try again.", f"{type(error).__name__}: {error}") from None
     return plan
 
 

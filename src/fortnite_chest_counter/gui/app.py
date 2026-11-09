@@ -48,6 +48,7 @@ RECORDING_CHOICES = (("Off", "off"), ("Only around my marks  (smallest)", "marks
 RECORDING_TEXT = {"marks": "only around your marks", "events": "around chest decisions and your marks",
                   "session": "the whole session"}
 REPO_URL = "https://github.com/GabrielGzS/fortnite-visual-chest-counter"
+UPDATE_HEALTH_DELAY_MS = 2000                                  # the window must have been running this long before it counts as started
 LOG_LIMIT = 3000
 fmt = settings.format_count
 # OBS WebSocket output (obs/link.py) states -> (short name, colour)
@@ -2376,10 +2377,8 @@ def _crash_hook(window_ref):
 def _single_instance():
     """One app window per program folder. -> a handle to keep, or None if another window is already open."""
     try:
-        import hashlib
         k = ctypes.WinDLL("kernel32", use_last_error=True)
-        name = "Local\\FortniteVisualChestCounter-App-" + hashlib.sha1(str(paths.APP_DIR).lower().encode()).hexdigest()[:16]
-        handle = k.CreateMutexW(None, False, name)
+        handle = k.CreateMutexW(None, False, paths.app_mutex_name())
         if handle and ctypes.get_last_error() == 183:
             return None
         return handle or True
@@ -2404,7 +2403,7 @@ def self_test(app, report_path):
     PC without anything appearing on screen."""
     report_path = Path(report_path)
     result = {"ok": False, "version": __version__, "python": sys.version.split()[0], "executable": sys.executable,
-              "app_dir": str(paths.APP_DIR), "packaged": paths.PACKAGED}
+              "app_dir": str(paths.APP_DIR), "packaged": paths.PACKAGED, "update_health": True}
     try:
         import PySide6
         from PySide6.QtCore import qVersion
@@ -2456,4 +2455,7 @@ def main(argv=None):
     sys.excepthook = _crash_hook(lambda: window)
     window.restore_layout()
     window.show()
+    if len(args) == 3 and args[0] == "--update-health":        # started by the updater: report only once the app is really up
+        from fortnite_chest_counter.update import health
+        QTimer.singleShot(UPDATE_HEALTH_DELAY_MS, lambda: health.write_report(args[1], args[2]))
     return app.exec()

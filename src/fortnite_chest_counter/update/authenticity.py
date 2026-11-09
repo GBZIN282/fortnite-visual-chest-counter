@@ -21,7 +21,7 @@ import base64
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fortnite_chest_counter.update.releases import Release, UpdateError, parse_version, zip_name
@@ -49,6 +49,8 @@ class VerifiedUpdate:
     release: Release
     manifest: Manifest
     signed_by: str                         # the key id that verified
+    manifest_bytes: bytes = field(default=b"", repr=False)     # kept so the signature can be checked again just before installing
+    signature_bytes: bytes = field(default=b"", repr=False)
 
 
 def _canonical(fields):
@@ -172,7 +174,7 @@ def verify_release(release, manifest_bytes, signature_bytes, installed, public_k
         raise UpdateError("mismatch", f"{_NOT_VERIFIED} ({mismatch.capitalize()} does not match the signed manifest.)")
     if version <= installed:
         raise UpdateError("downgrade", "This release is not newer than the installed version, so it will not be installed.")
-    return VerifiedUpdate(release, manifest, signer)
+    return VerifiedUpdate(release, manifest, signer, manifest_bytes, signature_bytes)
 
 
 def file_sha256(path):
@@ -190,5 +192,5 @@ def verify_package(path, manifest):
             raise UpdateError("mismatch", _NOT_VERIFIED + " (The downloaded file has the wrong size.)")
         if file_sha256(path) != manifest.sha256:
             raise UpdateError("mismatch", _NOT_VERIFIED + " (The downloaded file has the wrong checksum.)")
-    except OSError:
-        raise UpdateError("package_unreadable", "The downloaded update could not be read. Please try again.") from None
+    except OSError as error:
+        raise UpdateError("package_unreadable", "The downloaded update could not be read. Please try again.", f"{type(error).__name__}: {error}") from None

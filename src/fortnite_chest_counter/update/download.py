@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fortnite_chest_counter.update import authenticity as A
+from fortnite_chest_counter.update.install_helper import while_locked
 from fortnite_chest_counter.update.releases import GITHUB, UpdateError, network_errors, open_response
 
 DOWNLOAD_FOLDER = "download"
@@ -32,6 +33,8 @@ ADAPTIVE_COUNTING_LIMIT = 1_000_000        # bytes per second while counting; to
 CHUNK = 64 * 1024                          # about 15 small steps a second at 1 MB/s, so the limit stays smooth
 MAX_FAILURES = 4                           # attempts in a row without any new data
 RETRY_DELAY = 1.0                          # seconds, doubling after each failure
+RENAME_TRIES = 60                          # a finished zip or unpacked folder: antivirus may scan it for many seconds
+RENAME_DELAY = 0.5
 PROGRESS_INTERVAL = 0.1
 SPACE_MARGIN = 64 * 1024 * 1024
 UNPACK_FACTOR = 4                          # zip + unpacked copy; the real package unpacks to 2.6 times its size
@@ -77,20 +80,37 @@ class DownloadProgress:
 
 
 @contextlib.contextmanager
-def disk_errors():
+def disk_errors(what):
+    """`what` names the operation, so the log can say what failed and why while the message stays plain."""
     try:
         yield
     except OSError as error:
+        detail = f"{what}: {type(error).__name__}: {error}"
         if error.errno == errno.ENOSPC or getattr(error, "winerror", None) in _DISK_FULL:
-            raise UpdateError("disk_space", _NO_SPACE) from None
-        raise UpdateError("disk_error", "The update files could not be written. Please try again.") from None
+            raise UpdateError("disk_space", _NO_SPACE, detail) from None
+        raise UpdateError("disk_error", "The update files could not be written. Please try again.", detail) from None
 
 
 def ensure_folder(path):
     try:
         Path(path).mkdir(parents=True, exist_ok=True)
-    except OSError:
-        raise UpdateError("not_writable", "The app cannot write to its own folder, so it cannot update itself here.") from None
+    except OSError as error:
+        raise UpdateError("not_writable", "The app cannot write to its own folder, so it cannot update itself here.",
+                          f"creating {path}: {type(error).__name__}: {error}") from None
+
+
+def replace_when_free(source, target, cancel):
+    """Rename something large that was only just finished. Antivirus scans it straight away, and until it is done neither the file nor
+    a folder holding it can be renamed. Waits about 30 seconds at most, and can be cancelled."""
+    for attempt in range(RENAME_TRIES):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == RENAME_TRIES - 1:
+                raise
+            if cancel.wait(RENAME_DELAY):
+                raise cancelled() from None
 
 
 def require_space(folder, needed):
@@ -155,8 +175,9 @@ class _Partial:
             return 0
 
     def discard(self):
-        self.path.unlink(missing_ok=True)
-        self.note.unlink(missing_ok=True)
+        with disk_errors("removing a partial download"):
+            while_locked(self.path.unlink, True)
+            while_locked(self.note.unlink, True)
 
     def _note_matches(self):
         try:
@@ -171,7 +192,7 @@ class _Partial:
         if not self.note.exists():
             temporary = self.note.with_name(self.note.name + ".tmp")
             temporary.write_text(json.dumps(self.identity), encoding="utf-8")
-            os.replace(temporary, self.note)
+            while_locked(os.replace, temporary, self.note)
 
 
 def _transfer(url, partial, source, throttle, cancel, report):
@@ -188,7 +209,7 @@ def _transfer(url, partial, source, throttle, cancel, report):
             have, mode = 0, "wb"           # the server ignored the range: this is the whole file from its first byte
         else:
             raise UpdateError("api_error", f"GitHub answered with an unexpected status ({response.status}).")
-        with disk_errors(), open(partial.path, mode) as out:
+        with disk_errors("writing the download"), while_locked(open, partial.path, mode) as out:
             while have < partial.total:
                 if cancel.is_set():
                     raise cancelled()
@@ -214,17 +235,17 @@ def download_package(update, update_dir, source=GITHUB, policy=None, is_counting
     ensure_folder(folder)
     final = folder / manifest.zip
     partial = _Partial(final, manifest)
-    with disk_errors():
+    with disk_errors("preparing the download folder"):
         for leftover in folder.iterdir():  # only the release being downloaded is kept
             if leftover not in (final, partial.path, partial.note):
-                leftover.unlink()
+                while_locked(leftover.unlink)
         if final.exists():
             try:
                 A.verify_package(final, manifest)
                 report(manifest.size, final=True)
                 return final
             except UpdateError:
-                final.unlink()
+                while_locked(final.unlink)
         partial.begin()
     require_space(folder, manifest.size * UNPACK_FACTOR + SPACE_MARGIN - partial.size())
 
@@ -233,7 +254,7 @@ def download_package(update, update_dir, source=GITHUB, policy=None, is_counting
     while True:
         if cancel.is_set():
             raise cancelled()
-        with disk_errors():
+        with disk_errors("preparing the partial download"):
             partial.begin()
         before = partial.size()
         resumed = resumed or before > 0
@@ -259,8 +280,8 @@ def download_package(update, update_dir, source=GITHUB, policy=None, is_counting
             attempt += 1
             if cancel.wait(RETRY_DELAY * 2 ** max(failures - 1, 0)):
                 raise cancelled() from None
-    with disk_errors():
-        os.replace(partial.path, final)
-        partial.note.unlink(missing_ok=True)
+    with disk_errors("finishing the download"):
+        replace_when_free(partial.path, final, cancel)
+        while_locked(partial.note.unlink, True)
     report(manifest.size, final=True)
     return final
