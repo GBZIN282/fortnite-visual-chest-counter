@@ -4,11 +4,15 @@
 
 Windows 10 / 11 · nothing to install · extract the zip and open **`Fortnite Visual Chest Counter.exe`**
 
-**The app can now update itself.** v0.2.3 adds a built-in updater: the app tells you when a new version is out, then downloads
-and installs it when you choose to, keeping your counts, profiles and settings.
+**A built-in updater, as an experimental feature.** v0.2.3 adds an updater: the app tells you when a new version is out, then
+downloads and installs it when you choose to, keeping your counts, profiles and settings.
 
-> **One last manual download.** v0.2.2 and earlier have no updater, so they cannot update themselves to v0.2.3. Install this
-> version by hand once, as described below. Future versions can be installed from inside the app.
+> **This should be the last manual download.** v0.2.2 and earlier have no updater, so they cannot update themselves to v0.2.3.
+> Install this version by hand once, as described below. Future versions are meant to install from inside the app.
+>
+> **The updater is experimental.** There is no newer version for it to install yet, so a complete update and an automatic
+> rollback have not been run on a real installation. v0.2.4 will be the first. If an update does not work, install that version by
+> hand the same way as this one.
 
 ### What's new at a glance
 
@@ -17,8 +21,8 @@ and installs it when you choose to, keeping your counts, profiles and settings.
 | **Update notice** | Shortly after opening, the app checks for a new version. If there is one, a small **Update available** link appears in the sidebar. Nothing pops up |
 | **You choose when** | Nothing is downloaded or installed unless you ask. **Download & Install** gets the update ready; **Restart & Install** finishes it |
 | **Keeps counting** | Counting continues while an update downloads and is prepared. It only stops when you confirm the restart |
-| **Your data stays** | Counts, profiles, settings, OBS text files and your own files are kept, and your saved data is backed up before each update |
-| **Automatic recovery** | If a new version does not start properly, the app goes back to the previous version by itself and tells you what happened |
+| **Your data stays** | Built to keep your counts, profiles, settings, OBS text files and your own files, and to back up your saved data before each update |
+| **Automatic recovery** | Built to go back to the previous version by itself if a new version does not start properly, and to tell you what happened |
 | **Signed updates** | The app only installs updates signed by this project. A changed or unofficial download is refused |
 | **Download speed** | Settings > Updates: **Adaptive** (recommended, about 1 MB/s while counting and no limit otherwise), **Unlimited** or **Custom** |
 
@@ -33,6 +37,7 @@ Unchanged from v0.2.2. This version only adds the updater.
 
 ### Known limitations
 
+- The updater has not yet installed a real update or performed a real rollback. Automated tests cover it, but v0.2.4 will be its first real use.
 - v0.2.3 itself has to be installed by hand, and it is only available from the official GitHub releases page.
 - Checking for and downloading updates needs an internet connection and GitHub to be reachable. The app keeps working without them.
 - APPROX is an estimate; CERTAIN is the conservative number.
@@ -44,7 +49,7 @@ Unchanged from v0.2.2. This version only adds the updater.
   livestream on the same PC while Fortnite was being played without a BattlEye interruption - one observation, not a
   guarantee; anti-cheat compatibility has not been officially verified. See the README's *Fair play and compatibility*.
 
-### Installing v0.2.3 (the last manual download)
+### Installing v0.2.3
 
 Close the app, extract the new zip **into the same folder** and replace the files - counts, settings, profiles and OBS
 sources keep working (or copy `state\` and `config.toml` to a new folder). Download it only from the official

@@ -471,6 +471,7 @@ def test_the_release_notes_explain_the_last_manual_download():
     notes = (ROOT / "docs" / f"RELEASE_NOTES_v{__version__}.md").read_text(encoding="utf-8")
     assert notes.startswith(f"## Fortnite Visual Chest Counter v{__version__} — Public Beta") and R.zip_name(__version__) in notes
     assert "last manual download" in notes.lower() and "built-in updater" in notes.lower()
+    assert "experimental" in notes.lower() and "not been run on a real installation" in " ".join(notes.split()), "the unverified parts must be stated"
     for forbidden in ("antivirus", "defender", "smart app control", "smartscreen", "windows protected"):
         assert forbidden not in notes.lower(), forbidden
 

@@ -2,8 +2,21 @@
 
 Internal / developer note. Signing keys are covered in [UPDATE_SIGNING.md](UPDATE_SIGNING.md).
 
-**Current state:** the whole updater is built, including the app's window controls and settings, and passes the automated tests. Both
-production public keys are in the trust list. **A real packaged installation and rollback have not yet passed**, so v0.2.3 is not ready to publish.
+**Current state (v0.2.3):** the whole updater is built, including the app's window controls and settings, and passes the automated tests
+on small synthetic installations. Both production public keys are in the trust list. It ships as **experimental**.
+
+**Unverified, not passed.** The project has no users yet, so on 2026-11-09 the real-package checks were postponed to v0.2.4 development:
+
+- A complete update of a real package, and the other four scenarios under "Checking with a real package": automatic rollback, crash
+  recovery, damaged data and chained updates.
+- The deliberate-breakage check of the install and rollback code.
+- Whether the temporary update helper runs under Smart App Control.
+- The effect on counting while an update downloads and is prepared.
+
+The only attempt at a real packaged update, in M3, hit real bugs and then a Windows crash. Those bugs were fixed and have only been tested
+on small installations. The cause of one intermittent `disk_error` while preparing was never established; `.update\prepare.log` now records
+it. v0.2.3's own code performs the update to v0.2.4, so a defect in it cannot be fixed by the v0.2.4 package, and v0.2.4 may need a manual
+install.
 
 ## In the app
 
