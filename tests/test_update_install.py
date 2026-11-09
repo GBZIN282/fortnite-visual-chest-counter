@@ -1535,6 +1535,10 @@ def test_the_e2e_kit_is_built_without_touching_its_sources():
         info = json.loads((kit / "kit.json").read_text())
         assert (info["healthy"], info["broken"], info["next"]) == ("0.2.91", "0.2.92", "0.2.93")
         installed = kit / "base" / base.name
+        package = ROOT / "src/fortnite_chest_counter"
+        for file in package.rglob("*.py"):                                    # a kit made from an older build must test today's program
+            assert (installed / "runtime/lib/fortnite_chest_counter" / file.relative_to(package)).exists(), file
+        assert "[update]" in (installed / "config.example.toml").read_text(encoding="utf-8")
         trust_text = (installed / "runtime/lib/fortnite_chest_counter/update/trust.py").read_text()
         key = E2E.ECC_import((kit / "test_key.pem").read_text())
         assert S.public_key_hex(key) in trust_text

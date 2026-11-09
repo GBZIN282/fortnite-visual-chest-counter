@@ -147,8 +147,10 @@ def make_kit(base, out, max_path=MAX_KIT_PATH):
     installed = out / "base" / base.name
     shutil.copytree(base, installed)
     lib, source = installed / "runtime/lib/fortnite_chest_counter", _REPOSITORY / "src/fortnite_chest_counter"
-    for relative in [p.relative_to(source) for p in (source / "update").glob("*.py")] + [Path("gui/app.py"), Path("paths.py")]:
-        _set_source(lib / relative, (source / relative).read_text(encoding="utf-8"))
+    for file in source.rglob("*.py"):              # all our code, so a kit made from an older build tests today's program
+        if file != source / "version.py":          # the kit keeps the build's own version number
+            _set_source(lib / file.relative_to(source), file.read_text(encoding="utf-8"))
+    replace_file(installed / "config.example.toml", (_REPOSITORY / "config.example.toml").read_bytes())
     key = ECC.generate(curve="ed25519")
     (out / "test_key.pem").write_text(key.export_key(format="PEM"), encoding="ascii")
     trust = (lib / "update/trust.py").read_text(encoding="utf-8")
