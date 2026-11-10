@@ -100,7 +100,7 @@ jobs:
       - name: Make Authenticode inspection robust on Windows
         shell: pwsh
         run: |
-          @'
+          $py = @'
           from pathlib import Path
 
           p = Path("packaging/build_release.py")
@@ -127,7 +127,8 @@ jobs:
               return {Path(path): (status, signer) for path, status, signer in rows}
           '''
           p.write_text(source[:start] + replacement + source[end:], encoding="utf-8")
-          '@ | python -
+          '@
+          $py | python -
 
       - name: Build the self-contained BIELL282 Windows application
         shell: pwsh
