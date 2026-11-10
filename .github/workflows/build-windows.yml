@@ -1,0 +1,132 @@
+name: Build BIELL282 Chest Tracker for Windows
+
+on:
+  push:
+    branches:
+      - biell282-build
+    paths:
+      - '.github/workflows/build-windows.yml'
+      - 'BIELL282_BUILD.patch.xz.b64.part*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows x64 portable application
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out BIELL282 source branch
+        uses: actions/checkout@v4
+
+      - name: Set up matching Python build interpreter
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.17'
+          architecture: 'x64'
+
+      - name: Reconstruct and apply the BIELL282 source patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $encoded = @(
+            (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part1').Trim()
+            (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part2').Trim()
+            (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part3').Trim()
+            (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part4').Trim()
+            (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part5').Trim()
+          ) -join ''
+          [IO.File]::WriteAllBytes('BIELL282_BUILD.patch.xz', [Convert]::FromBase64String($encoded))
+          python -c "import lzma,pathlib; pathlib.Path('BIELL282_BUILD.patch').write_bytes(lzma.decompress(pathlib.Path('BIELL282_BUILD.patch.xz').read_bytes()))"
+          git apply --check BIELL282_BUILD.patch
+          git apply BIELL282_BUILD.patch
+
+      - name: Install MinGW-w64 for the native Windows launcher
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+
+      - name: Download official Python runtime and matching LGPL FFmpeg inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inputs = Join-Path $PWD 'build_out\inputs'
+          New-Item -ItemType Directory -Force -Path $inputs | Out-Null
+          $downloads = @(
+            @{
+              Name = 'python-3.13.17-embed-amd64.zip'
+              Url  = 'https://www.python.org/ftp/python/3.13.17/python-3.13.17-embed-amd64.zip'
+            },
+            @{
+              Name = 'ffmpeg-N-128433-gdb8537d8cc-win64-lgpl.zip'
+              Url  = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-05-12-48/ffmpeg-N-128433-gdb8537d8cc-win64-lgpl.zip'
+            },
+            @{
+              Name = 'ffmpeg-source-db8537d8cc.tar.gz'
+              Url  = 'https://github.com/FFmpeg/FFmpeg/archive/db8537d8cc.tar.gz'
+            }
+          )
+          foreach ($item in $downloads) {
+            $destination = Join-Path $inputs $item.Name
+            Write-Host "Downloading $($item.Name)"
+            Invoke-WebRequest -Uri $item.Url -OutFile $destination
+            if (!(Test-Path $destination) -or (Get-Item $destination).Length -lt 100000) {
+              throw "Download failed or was unexpectedly small: $($item.Name)"
+            }
+          }
+
+      - name: Install pinned application build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r packaging/build-requirements.txt pytest
+          python -c "import sys; assert sys.version_info[:3] == (3,13,17), sys.version"
+          python -c "import numpy, scipy, PySide6; print('NumPy', numpy.__version__, 'SciPy', scipy.__version__, 'PySide6', PySide6.__version__)"
+
+      - name: Run detector, profile, release and OBS regression tests
+        shell: pwsh
+        run: |
+          python -m pytest -q tests/test_basics.py tests/test_profiles.py tests/test_release.py tests/test_obs.py
+
+      - name: Build the self-contained BIELL282 Windows application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+          python packaging/build_release.py `
+            --python-embed build_out\inputs\python-3.13.17-embed-amd64.zip `
+            --ffmpeg-zip build_out\inputs\ffmpeg-N-128433-gdb8537d8cc-win64-lgpl.zip `
+            --ffmpeg-source build_out\inputs\ffmpeg-source-db8537d8cc.tar.gz `
+            --mingw C:\msys64\mingw64\bin `
+            --out build_out\release
+
+      - name: Smoke-test the packaged executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $appDir = Join-Path $PWD 'build_out\release\BIELL282-Chest-Tracker-v0.2.3'
+          $exe = Join-Path $appDir 'BIELL282 Chest Tracker.exe'
+          $report = Join-Path $env:RUNNER_TEMP 'biell282-self-test.json'
+          if (!(Test-Path $exe)) { throw "Expected executable was not built: $exe" }
+          Start-Process -FilePath $exe -ArgumentList @('--self-test', $report) | Out-Null
+          $deadline = (Get-Date).AddSeconds(60)
+          while (!(Test-Path $report) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+          if (!(Test-Path $report)) { throw 'Packaged executable did not produce a self-test report within 60 seconds.' }
+          $result = Get-Content $report -Raw | ConvertFrom-Json
+          Get-Content $report
+          if (!$result.ok) { throw 'The BIELL282 packaged executable self-test failed.' }
+
+      - name: Upload the portable app ZIP and verification files
+        uses: actions/upload-artifact@v4
+        with:
+          name: BIELL282-Chest-Tracker-Windows-x64-v0.2.3
+          if-no-files-found: error
+          path: |
+            build_out/release/BIELL282-Chest-Tracker-v0.2.3.zip
+            build_out/release/SHA256SUMS.txt
+            build_out/release/SIGNATURES.txt
