@@ -100,34 +100,34 @@ jobs:
       - name: Make Authenticode inspection robust on Windows
         shell: pwsh
         run: |
-          $path = 'packaging/build_release.py'
-          $source = [IO.File]::ReadAllText($path)
-          $start = $source.IndexOf('def authenticode(paths):')
-          $end = $source.IndexOf('def verify_record(dist):', $start)
-          if ($start -lt 0 -or $end -lt 0) { throw 'Could not locate the Authenticode helper to patch.' }
-          $replacement = @'
-def authenticode(paths):
-    """Read Authenticode status for each binary; preserve the release gate for unsigned files."""
-    script = r"""$ErrorActionPreference='Stop'
-$paths = [Console]::In.ReadToEnd() -split '\r?\n' | Where-Object { $_ }
-foreach ($p in $paths) {
-    $s = Get-AuthenticodeSignature -LiteralPath $p -ErrorAction Stop
-    $subject = ''
-    if ($null -ne $s.SignerCertificate) { $subject = $s.SignerCertificate.Subject }
-    '{0}|{1}|{2}' -f $p, $s.Status, ($subject -replace '^CN=([^,]+).*','$1')
-}
-"""
-    proc = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-                          input="\n".join(map(str, paths)), capture_output=True, text=True)
-    if proc.returncode:
-        raise RuntimeError(f"Authenticode inspection failed ({proc.returncode}):\n{proc.stderr}\n{proc.stdout}")
-    rows = (line.split("|", 2) for line in proc.stdout.splitlines() if line.count("|") == 2)
-    return {Path(path): (status, signer) for path, status, signer in rows}
+          @'
+          from pathlib import Path
 
+          p = Path("packaging/build_release.py")
+          source = p.read_text(encoding="utf-8")
+          start = source.index("def authenticode(paths):")
+          end = source.index("\ndef verify_record(dist):", start)
 
-'@
-          $source = $source.Substring(0, $start) + $replacement + $source.Substring($end)
-          [IO.File]::WriteAllText($path, $source, [Text.UTF8Encoding]::new($false))
+          replacement = r'''def authenticode(paths):
+              """Read Authenticode status for each binary via PowerShell."""
+              script = r"""$ErrorActionPreference='Stop'
+          $paths = [Console]::In.ReadToEnd() -split '\r?\n' | Where-Object { $_ }
+          foreach ($p in $paths) {
+              $s = Get-AuthenticodeSignature -LiteralPath $p -ErrorAction Stop
+              $subject = ''
+              if ($null -ne $s.SignerCertificate) { $subject = $s.SignerCertificate.Subject }
+              '{0}|{1}|{2}' -f $p, $s.Status, ($subject -replace '^CN=([^,]+).*','$1')
+          }
+          """
+              proc = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+                                    input="\n".join(map(str, paths)), capture_output=True, text=True)
+              if proc.returncode:
+                  raise RuntimeError(f"Authenticode inspection failed ({proc.returncode}):\n{proc.stderr}\n{proc.stdout}")
+              rows = (line.split("|", 2) for line in proc.stdout.splitlines() if line.count("|") == 2)
+              return {Path(path): (status, signer) for path, status, signer in rows}
+          '''
+          p.write_text(source[:start] + replacement + source[end:], encoding="utf-8")
+          '@ | python -
 
       - name: Build the self-contained BIELL282 Windows application
         shell: pwsh
