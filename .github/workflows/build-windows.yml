@@ -1,4 +1,5 @@
 name: Build BIELL282 Chest Tracker for Windows
+# Build starts on a source-branch or main-branch push touching this workflow or patch payload.
 
 on:
   push:
