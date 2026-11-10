@@ -57,12 +57,13 @@ jobs:
             (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part1').Trim()
             (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part2').Trim()
             (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part3').Trim()
-            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part4').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part4a').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part4b').Trim()
             (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part5').Trim()
-            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part6').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part6a').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part6b').Trim()
             (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part7').Trim()
             (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part8').Trim()
-            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part9').Trim()
           ) -join ''
           [IO.File]::WriteAllBytes('BIELL282_STUDIO.patch.xz', [Convert]::FromBase64String($encoded))
           python -c "import lzma,pathlib; pathlib.Path('BIELL282_STUDIO.patch').write_bytes(lzma.decompress(pathlib.Path('BIELL282_STUDIO.patch.xz').read_bytes()))"
