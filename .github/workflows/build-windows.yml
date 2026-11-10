@@ -6,9 +6,11 @@ on:
     branches:
       - biell282-build
       - main
+      - biell282-studio-v0.3.0
     paths:
       - '.github/workflows/build-windows.yml'
       - 'BIELL282_BUILD.patch.xz.b64.part*'
+      - 'BIELL282_STUDIO.patch.xz.b64.part*'
   workflow_dispatch:
 
 permissions:
@@ -46,6 +48,26 @@ jobs:
           python -c "import lzma,pathlib; pathlib.Path('BIELL282_BUILD.patch').write_bytes(lzma.decompress(pathlib.Path('BIELL282_BUILD.patch.xz').read_bytes()))"
           git apply --check BIELL282_BUILD.patch
           git apply BIELL282_BUILD.patch
+
+      - name: Reconstruct and apply the BIELL282 Studio screen-first app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $encoded = @(
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part1').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part2').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part3').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part4').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part5').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part6').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part7').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part8').Trim()
+            (Get-Content -Raw 'BIELL282_STUDIO.patch.xz.b64.part9').Trim()
+          ) -join ''
+          [IO.File]::WriteAllBytes('BIELL282_STUDIO.patch.xz', [Convert]::FromBase64String($encoded))
+          python -c "import lzma,pathlib; pathlib.Path('BIELL282_STUDIO.patch').write_bytes(lzma.decompress(pathlib.Path('BIELL282_STUDIO.patch.xz').read_bytes()))"
+          git apply --check BIELL282_STUDIO.patch
+          git apply BIELL282_STUDIO.patch
 
       - name: Install MinGW-w64 for the native Windows launcher
         uses: msys2/setup-msys2@v2
@@ -146,7 +168,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $appDir = Join-Path $PWD 'build_out\release\BIELL282-Chest-Tracker-v0.2.3'
+          $appDir = Join-Path $PWD 'build_out\release\BIELL282-Chest-Tracker-v0.3.0'
           $exe = Join-Path $appDir 'BIELL282 Chest Tracker.exe'
           $report = Join-Path $env:RUNNER_TEMP 'biell282-self-test.json'
           if (!(Test-Path $exe)) { throw "Expected executable was not built: $exe" }
@@ -161,7 +183,7 @@ jobs:
       - name: Upload the portable app ZIP and verification files
         uses: actions/upload-artifact@v4
         with:
-          name: BIELL282-Chest-Tracker-Windows-x64-v0.2.3
+          name: BIELL282-Chest-Tracker-Windows-x64-v0.3.0
           if-no-files-found: error
           path: |
             build_out/release/BIELL282-Chest-Tracker-v0.2.3.zip
