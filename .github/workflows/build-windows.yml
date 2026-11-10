@@ -109,7 +109,7 @@ jobs:
 def authenticode(paths):
     """Read Authenticode status for each binary; preserve the release gate for unsigned files."""
     script = r"""$ErrorActionPreference='Stop'
-$paths = [Console]::In.ReadToEnd() -split '\\r?\\n' | Where-Object { $_ }
+$paths = [Console]::In.ReadToEnd() -split '\r?\n' | Where-Object { $_ }
 foreach ($p in $paths) {
     $s = Get-AuthenticodeSignature -LiteralPath $p -ErrorAction Stop
     $subject = ''
@@ -118,9 +118,9 @@ foreach ($p in $paths) {
 }
 """
     proc = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-                          input="\\n".join(map(str, paths)), capture_output=True, text=True)
+                          input="\n".join(map(str, paths)), capture_output=True, text=True)
     if proc.returncode:
-        raise RuntimeError(f"Authenticode inspection failed ({proc.returncode}):\\n{proc.stderr}\\n{proc.stdout}")
+        raise RuntimeError(f"Authenticode inspection failed ({proc.returncode}):\n{proc.stderr}\n{proc.stdout}")
     rows = (line.split("|", 2) for line in proc.stdout.splitlines() if line.count("|") == 2)
     return {Path(path): (status, signer) for path, status, signer in rows}
 
