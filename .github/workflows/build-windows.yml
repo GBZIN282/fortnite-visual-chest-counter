@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - biell282-build
+      - main
     paths:
       - '.github/workflows/build-windows.yml'
       - 'BIELL282_BUILD.patch.xz.b64.part*'
@@ -33,7 +34,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $encoded = @(
             (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part1').Trim()
-            (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part2').Trim()
+            (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part2a').Trim()
+            (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part2b').Trim()
+            (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part2c').Trim()
             (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part3').Trim()
             (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part4').Trim()
             (Get-Content -Raw 'BIELL282_BUILD.patch.xz.b64.part5').Trim()
