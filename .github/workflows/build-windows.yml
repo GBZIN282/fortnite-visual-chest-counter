@@ -187,6 +187,6 @@ jobs:
           name: BIELL282-Chest-Tracker-Windows-x64-v0.3.0
           if-no-files-found: error
           path: |
-            build_out/release/BIELL282-Chest-Tracker-v0.2.3.zip
+            build_out/release/BIELL282-Chest-Tracker-v0.3.0.zip
             build_out/release/SHA256SUMS.txt
             build_out/release/SIGNATURES.txt
